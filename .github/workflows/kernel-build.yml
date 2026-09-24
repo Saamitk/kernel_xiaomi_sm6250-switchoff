@@ -176,12 +176,8 @@ jobs:
           done
 
       - name: Build
-        # LLVM=1 is honoured by this tree's top Makefile: it swaps CC/LD/AR/NM/
-        # OBJCOPY/OBJDUMP/READELF/STRIP for clang + llvm-* (no GNU binutils).
-        # LLVM_IAS=1 keeps the integrated assembler (so no `as` is needed), and
-        # CLANG_TRIPLE gives clang the aarch64 target.
         run: |
-          set -e
+          set -eo pipefail
           make -j$(nproc) O=out ARCH=$ARCH \
             LLVM=1 LLVM_IAS=1 \
             CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$CROSS_COMPILE \
@@ -192,8 +188,28 @@ jobs:
             KSU_VERSION_OVERRIDE=$KSU_VERSION \
             KSU_VERSION_TAG_OVERRIDE=$KSU_VERSION_TAG \
             ${{ inputs.extra_make_flags }} \
-            Image.gz modules 2>&1 | tee /tmp/build.log
+            Image.gz 2>&1 | tee /tmp/build.log
           echo "===== warnings: $(grep -c 'warning:' /tmp/build.log) | errors: $(grep -c 'error:' /tmp/build.log) ====="
+          [ -s out/arch/arm64/boot/Image.gz ] || { echo "make exited 0 but Image.gz is missing"; exit 1; }
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          set +e
+          [ -f /tmp/build.log ] || : > /tmp/build.log
+          {
+            echo "## Build log diagnostics"
+            echo '```'
+            grep -nE "error:|Error [0-9]+|undefined reference|No rule to make target|command not found|cannot find" /tmp/build.log | head -40
+            echo "--- first error with context ---"
+            grep -n -m1 -B4 -A16 "error:" /tmp/build.log
+            echo "--- tail ---"
+            tail -25 /tmp/build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::make failed:%0A$(grep -E "error:|Error [0-9]+|No rule to make target|command not found|cannot find" /tmp/build.log | head -20 | sed ':a;N;$!ba;s/\n/%0A/g')"
+          echo "::error::first error context:%0A$(grep -m1 -B2 -A10 "error:" /tmp/build.log | sed ':a;N;$!ba;s/\n/%0A/g')"
+          echo "::error::log tail:%0A$(tail -20 /tmp/build.log | sed ':a;N;$!ba;s/\n/%0A/g')"
 
       - name: Verify build output
         run: |
