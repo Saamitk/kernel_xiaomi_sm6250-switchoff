@@ -28,7 +28,7 @@ index bfbe10583..8e40766c6 100644
 +CONFIG_NOMOUNT=y
 +CONFIG_KALLSYMS_ALL=y
 diff --git a/build.sh b/build.sh
-index 1271ca6b4..e852df49b 100755
+index 1271ca6b4..1d87b0abb 100755
 --- a/build.sh
 +++ b/build.sh
 @@ -1,48 +1,111 @@
@@ -158,7 +158,7 @@ index 1271ca6b4..e852df49b 100755
 +  LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
 +  OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip SIZE=llvm-size \
 +  HOSTCC=clang HOSTCXX=clang++ HOSTLD=ld.lld HOSTAR=llvm-ar \
-+  KCFLAGS="-Wno-error" \
++  KCFLAGS="-Wno-error=implicit-int -Wno-error=strict-prototypes" \
 +  KSU_VERSION_OVERRIDE="$KSU_VERSION" \
 +  KSU_VERSION_TAG_OVERRIDE="$KSU_VERSION_TAG" \
 +  Image.gz
@@ -2256,14 +2256,16 @@ index e6f4c7b88..0c5e360f9 100644
  }
  #endif
 diff --git a/fs/stat.c b/fs/stat.c
-index 0fda4b6b8..36640eb20 100644
+index 0fda4b6b8..334475683 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
-@@ -21,6 +21,11 @@
+@@ -21,6 +21,13 @@
  #include <linux/uaccess.h>
  #include <asm/unistd.h>
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++#include <linux/sched.h>		/* for test_thread_flag(), used by susfs_def.h */
++#include <linux/susfs_def.h>
 +extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
 +extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
@@ -2271,7 +2273,7 @@ index 0fda4b6b8..36640eb20 100644
  /**
   * generic_fillattr - Fill in the basic attributes from the inode struct
   * @inode: Inode to use as the source
-@@ -75,9 +80,53 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+@@ -75,9 +82,53 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
  	stat->result_mask |= STATX_BASIC_STATS;
  	request_mask &= STATX_ALL;
  	query_flags &= KSTAT_QUERY_FLAGS;
@@ -2325,7 +2327,7 @@ index 0fda4b6b8..36640eb20 100644
  
  	generic_fillattr(inode, stat);
  	return 0;
-@@ -354,6 +403,12 @@ SYSCALL_DEFINE2(newlstat, const char __user *, filename,
+@@ -354,6 +405,12 @@ SYSCALL_DEFINE2(newlstat, const char __user *, filename,
  }
  
  #if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
@@ -2338,7 +2340,7 @@ index 0fda4b6b8..36640eb20 100644
  SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
  		struct stat __user *, statbuf, int, flag)
  {
-@@ -361,6 +416,10 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+@@ -361,6 +418,10 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
  	int error;
  
  	error = vfs_fstatat(dfd, filename, &stat, flag);
@@ -2349,7 +2351,7 @@ index 0fda4b6b8..36640eb20 100644
  	if (error)
  		return error;
  	return cp_new_stat(&stat, statbuf);
-@@ -505,6 +564,10 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
+@@ -505,6 +566,10 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
  	int error;
  
  	error = vfs_fstatat(dfd, filename, &stat, flag);

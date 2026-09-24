@@ -56,6 +56,28 @@ Call sites inserted (all inside `#ifdef CONFIG_KSU`):
 | `kernel/sys.c` | `__do_sys_setresuid()` | `ksu_handle_setresuid(ruid/euid/suid)` |
 | `security/selinux/hooks.c` | `selinux_setprocattr()` | `ksu_handle_selinux_setprocattr()` |
 
+### Port fixup required by the SuSFS 4.14 patch
+
+`include/linux/susfs_def.h` of this SuSFS port keeps `STATX_SUS_KSTAT` /
+`STATX_SUS_KSTAT_FUSE` / `susfs_is_current_app_uid()` **inside the header** (it does
+not touch `include/uapi/linux/stat.h`, unlike the GKI patch), but the hunk it applies
+to `fs/stat.c` only adds the two `extern` prototypes and no include -- so the tree
+fails with
+
+```
+fs/stat.c:84:6: error: implicit declaration of function 'susfs_is_current_app_uid' [-Werror,-Wimplicit-function-declaration]
+fs/stat.c:90:26: error: use of undeclared identifier 'STATX_SUS_KSTAT'
+```
+
+`apply_ksu_hooks.py` therefore also performs this fixup (adds
+`#include <linux/susfs_def.h>` plus `<linux/sched.h>` for `test_thread_flag()`, which
+the header's `TIF_PROC_UMOUNTED` helpers need) inside the existing
+`#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT` block, and `audit_hooks.sh` gates on it. The
+`TIF_PROC_UMOUNTED 33` / `TIF_PROC_NO_SU 34` / `TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35`
+bits come from `susfs_def.h` itself, so **no `arch/arm64/include/asm/thread_info.h`
+change is needed** (bits 26-31 are unused there too, hence no clash with
+`_TIF_WORK_MASK`), which is why the port ships no thread_info hunk.
+
 Deliberately **not** done, and why:
 
 * `security/security.c` — this fork does not export `security_sb_*` hooks there; its SELinux work lives in `feature/selinux_hide.c` and the vendored `security/selinux/avc.c` SuSFS hooking.

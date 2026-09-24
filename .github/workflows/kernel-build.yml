@@ -184,7 +184,7 @@ jobs:
             LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
             OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip SIZE=llvm-size \
             HOSTCC=clang HOSTCXX=clang++ HOSTLD=ld.lld HOSTAR=llvm-ar \
-            KCFLAGS="-Wno-error" \
+            KCFLAGS="-Wno-error=implicit-int -Wno-error=strict-prototypes" \
             KSU_VERSION_OVERRIDE=$KSU_VERSION \
             KSU_VERSION_TAG_OVERRIDE=$KSU_VERSION_TAG \
             ${{ inputs.extra_make_flags }} \

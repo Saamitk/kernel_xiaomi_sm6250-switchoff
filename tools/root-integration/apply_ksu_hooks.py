@@ -298,6 +298,41 @@ WIRING = [
 ]
 
 
+# ------------------------------------------- post-susfs-patch fixups ----
+# The 4.14 port of SuSFS v2.3.0 inserts an "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT"
+# block into fs/stat.c that declares two externs but never includes
+# <linux/susfs_def.h> -- which is exactly where STATX_SUS_KSTAT,
+# STATX_SUS_KSTAT_FUSE and susfs_is_current_app_uid() are defined by this port
+# (the port keeps them out of <uapi/linux/stat.h> on purpose). Without the
+# include the file does not compile:
+#
+#   fs/stat.c:84:6: error: implicit declaration of function 'susfs_is_current_app_uid'
+#   fs/stat.c:90:26: error: use of undeclared identifier 'STATX_SUS_KSTAT'
+#
+# <linux/sched.h> is added too because susfs_def.h's TIF_* helpers call
+# test_thread_flag(); it is a no-op when already pulled in transitively.
+STAT_ANCHOR = ("#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+               "extern bool susfs_is_inode_sus_kstat")
+STAT_INCLUDES = ("#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+                 "#include <linux/sched.h>\t\t/* for test_thread_flag(), used by susfs_def.h */\n"
+                 "#include <linux/susfs_def.h>\n")
+
+
+def fix_stat_c_susfs_include(src):
+    if "#include <linux/susfs_def.h>" in src:
+        return src, "fs/stat.c already includes <linux/susfs_def.h>"
+    if "CONFIG_KSU_SUSFS_SUS_KSTAT" not in src:
+        return src, "no SuSFS block in fs/stat.c (SuSFS not applied?) -- skipped"
+    if src.count(STAT_ANCHOR) != 1:
+        raise AnchorError("fs/stat.c: expected exactly one SuSFS SUS_KSTAT extern block, found %d"
+                          % src.count(STAT_ANCHOR))
+    src = src.replace(STAT_ANCHOR, STAT_INCLUDES + "extern bool susfs_is_inode_sus_kstat", 1)
+    return src, "added <linux/susfs_def.h> to the SUS_KSTAT block"
+
+
+FIXUPS = [("fs/stat.c", fix_stat_c_susfs_include)]
+
+
 def audit():
     rc = 0
     print("== KernelSU / SUSFS / NoMount integration audit ==")
@@ -317,6 +352,13 @@ def audit():
         ok = has_decl and has_call
         print("%-26s %-32s %s" % (path, hook, "OK" if ok else "MISSING"))
         rc |= 0 if ok else 1
+    print("-- post-susfs fixups --")
+    try:
+        ok = "#include <linux/susfs_def.h>" in read("fs/stat.c")
+    except OSError:
+        ok = False
+    print("%-26s %-32s %s" % ("fs/stat.c", "susfs_def.h include", "OK" if ok else "MISSING"))
+    rc |= 0 if ok else 1
     print("-- tree wiring --")
     for path, marker in WIRING:
         try:
@@ -338,7 +380,7 @@ def main():
     os.chdir(SRCTREE)
     print("== applying KernelSU manual hooks in %s ==" % SRCTREE)
     failed = False
-    for path, fn in build_jobs():
+    for path, fn in build_jobs() + FIXUPS:
         try:
             src = read(path)
             out, note = fn(src)

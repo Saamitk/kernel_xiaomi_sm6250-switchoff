@@ -69,6 +69,13 @@ for f in "${!SUSFS_SITES[@]}"; do
   if [ -f "$f" ] && grep -Eq "$pat" "$f"; then ok "$f has SuSFS hooking"; else bad "$f lacks SuSFS hooking (expected: $pat)"; fi
 done
 
+sec "SuSFS port fixups (the upstream 4.14 port forgets these)"
+if grep -q "#include <linux/susfs_def.h>" fs/stat.c; then
+  ok "fs/stat.c includes <linux/susfs_def.h> (STATX_SUS_KSTAT + susfs_is_current_app_uid)"
+else
+  bad "fs/stat.c lacks <linux/susfs_def.h> -> 'undeclared identifier STATX_SUS_KSTAT'; run apply_ksu_hooks.py"
+fi
+
 sec "KernelSU manual hook call sites (KSU_MANUAL_HOOK)"
 python3 tools/root-integration/apply_ksu_hooks.py --verify . || bad "hook call sites incomplete"
 
