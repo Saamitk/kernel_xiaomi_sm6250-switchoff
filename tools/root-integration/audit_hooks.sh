@@ -14,6 +14,8 @@ set -u
 ROOT=${1:-"$(cd "$(dirname "$0")/../.." && pwd)"}
 cd "$ROOT" || { echo "no kernel tree at $ROOT"; exit 1; }
 fail=0; warn=0
+DEF=arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
+[ -f "$DEF" ] || DEF=$(ls arch/arm64/configs/vendor/*/*_defconfig 2>/dev/null | head -1)
 ok()   { printf '[ OK ] %s\n' "$1"; }
 bad()  { printf '[FAIL] %s\n' "$1"; fail=$((fail+1)); }
 soft() { printf '[WARN] %s\n' "$1"; warn=$((warn+1)); }
@@ -76,23 +78,30 @@ else
   bad "fs/stat.c lacks <linux/susfs_def.h> -> 'undeclared identifier STATX_SUS_KSTAT'; run apply_ksu_hooks.py"
 fi
 
+sec "SuSFS symbol resolution (fork calls vs what the port provides)"
+if python3 tools/root-integration/check_susfs_symbols.py . "$DEF"; then :; else bad "susfs_* symbol referenced by the fork has no definition (see above)"; fi
+
 sec "KernelSU manual hook call sites (KSU_MANUAL_HOOK)"
 python3 tools/root-integration/apply_ksu_hooks.py --verify . || bad "hook call sites incomplete"
 
 
 sec "defconfig"
-DEF=arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
 if [ -f "$DEF" ]; then
   ok "defconfig: $DEF"
   for c in CONFIG_KSU=y CONFIG_KSU_MANUAL_HOOK=y CONFIG_KSU_SUSFS=y CONFIG_NOMOUNT=y CONFIG_KALLSYMS_ALL=y; do
     grep -qx "$c" "$DEF" && ok "  $c" || bad "  missing: $c"
   done
-  for c in CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_TRY_UMOUNT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_MAP; do
+  for c in CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_MAP; do
     grep -qx "$c=y" "$DEF" && ok "  $c=y" || soft "  not enabled: $c"
   done
   dups=$(grep -E '^CONFIG_(KSU|NOMOUNT|KALLSYMS_ALL)' "$DEF" | sort | uniq -d)
   [ -z "$dups" ] && ok "  no duplicate KSU/NOMOUNT/KALLSYMS lines" || { bad "  duplicate lines:"; note "$dups"; }
   grep -q '^# CONFIG_KPROBES is not set' "$DEF" && note "CONFIG_KPROBES off -> KSU_MANUAL_HOOK is mandatory (expected on 4.14)"
+  if grep -qx 'CONFIG_KSU_SUSFS_TRY_UMOUNT=y' "$DEF"; then
+    bad "CONFIG_KSU_SUSFS_TRY_UMOUNT=y but this SuSFS port provides no susfs_try_umount()/susfs_add_try_umount() -> build/link error"
+  else
+    ok "  CONFIG_KSU_SUSFS_TRY_UMOUNT off (fork's own ksu_handle_umount() path is used)"
+  fi
 else
   soft "no defconfig found; skipping defconfig checks"
 fi

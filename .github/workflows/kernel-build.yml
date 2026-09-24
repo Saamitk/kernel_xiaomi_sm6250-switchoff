@@ -139,12 +139,15 @@ jobs:
           done
 
       - name: Integration audit (KernelSU / SuSFS v2.3.0 / NoMount)
+        env:
+          DEFCONFIG_PATH: arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
         run: |
           set -e
           test -e drivers/kernelsu/Kconfig || { echo "::error::drivers/kernelsu symlink broken"; exit 1; }
           test -f fs/nomount/nomount.c || { echo "::error::fs/nomount missing"; exit 1; }
           test -f fs/susfs.c || { echo "::error::fs/susfs.c missing"; exit 1; }
           python3 tools/root-integration/apply_ksu_hooks.py --verify .
+          python3 tools/root-integration/check_susfs_symbols.py . "$DEFCONFIG_PATH"
 
       - name: Component versions
         run: |
@@ -230,7 +233,7 @@ jobs:
         run: |
           set -e
           BUILD_DATE="$(date -u +'%Y%m%d-%H%M')"
-          ZIP="miatoll-kernel-kernelsu-susfs-nomount-${BUILD_DATE}"
+          ZIP="Stormbreaker-miatoll-${BUILD_DATE}-rootstack.zip"
           rm -rf AK3 && cp -a AnyKernel3 AK3
           find AK3 -name .gitignore -delete
           cp "out/arch/arm64/boot/${KERNEL_FILE}" "AK3/${KERNEL_FILE}"
@@ -248,10 +251,10 @@ jobs:
           Built: ${BUILD_DATE} UTC
           Kernel image in this zip: ${KERNEL_FILE}
           EOF
-          ( cd AK3 && zip -r9 "../${ZIP}.zip" * )
-          sha256sum "${ZIP}.zip" > "${ZIP}.zip.sha256sum"
-          echo "ZIP_NAME=${ZIP}.zip" >> "$GITHUB_ENV"
-          ls -la "${ZIP}.zip"; cat "${ZIP}.zip.sha256sum"
+          ( cd AK3 && zip -r9 "../${ZIP}" * )
+          sha256sum "${ZIP}" > "${ZIP}.sha256sum"
+          echo "ZIP_NAME=${ZIP}" >> "$GITHUB_ENV"
+          ls -la "${ZIP}"; cat "${ZIP}.sha256sum"
 
       - name: Upload flashable zip
         uses: actions/upload-artifact@v4
