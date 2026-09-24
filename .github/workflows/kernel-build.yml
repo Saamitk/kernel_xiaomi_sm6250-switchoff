@@ -43,8 +43,8 @@ concurrency:
 
 env:
   ARCH: arm64
-  LLVM_VER: 18.1.8
-  LLVM_TARBALL: clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04
+  LLVM_VER: 18
+  LLVM_DIR: /usr/lib/llvm-18/bin
   CROSS_COMPILE: aarch64-linux-gnu-
   KSU_VERSION_TAG: ksun-legacy-susfs-v2-d999a2af
   KSU_VERSION: "30000"
@@ -72,7 +72,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            bc bison flex python3 zip unzip curl wget patch file \
+            bc bison flex python3 zip curl wget patch file \
             ca-certificates libssl-dev libelf-dev
           # The kernel *and* the host programs are built with clang (HOSTCC=clang),
           # so the runner's gcc is never invoked. libc6-dev is preinstalled on the
@@ -80,42 +80,63 @@ jobs:
           clang_ver=$(clang --version 2>/dev/null | head -1 || true)
           echo "runner clang (unused, only for reference): $clang_ver"
 
-      - name: Cache LLVM
-        id: llvm-cache
-        uses: actions/cache@v4
-        with:
-          path: toolchains
-          key: llvm-${{ env.LLVM_VER }}-ubuntu18.04-v2
-
-      - name: Download LLVM ${{ env.LLVM_VER }}
-        if: steps.llvm-cache.outputs.cache-hit != 'true'
+      - name: Install clang 18 (apt.llvm.org, no gcc / no binutils-aarch64)
+        # The LLVM release tarballs are built against libtinfo5, which Ubuntu
+        # 24.04 no longer ships, so clang 18 comes from apt.llvm.org instead --
+        # that pins 18.1.8 deterministically. If the repo is unreachable the
+        # runner's own clang-18 (ubuntu-24.04 ships 18.1.3) is used, and the
+        # version assert below still guarantees "clang 18, nothing else".
         run: |
           set -e
-          mkdir -p toolchains
-          cd toolchains
-          ok=0
-          for url in \
-            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}/${LLVM_TARBALL}.tar.xz" \
-            "https://releases.llvm.org/${LLVM_VER}/${LLVM_TARBALL}.tar.xz"; do
-            echo "::group::trying $url"
-            if curl -fL --retry 3 --retry-delay 5 -o llvm.tar.xz "$url"; then ok=1; break; fi
-            echo "::endgroup::"
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          . /etc/os-release
+          installed=0
+          for suite in "llvm-toolchain-${VERSION_CODENAME}-18" "llvm-toolchain-noble-18"; do
+            echo "deb [signed-by=/etc/apt/trusted.gpg.d/apt.llvm.org.asc] http://apt.llvm.org/${VERSION_CODENAME}/ ${suite} main" \
+              | sudo tee /etc/apt/sources.list.d/llvm18.list
+            if sudo apt-get update -y -qq; then
+              if sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18; then
+                installed=1; break
+              fi
+            fi
           done
-          [ "$ok" = "1" ] || { echo "::error::could not download LLVM ${LLVM_VER}"; exit 1; }
-          tar -xf llvm.tar.xz
-          rm -f llvm.tar.xz
-          mv "${LLVM_TARBALL}" llvm
-          rm -rf llvm/libclang* llvm/lib/*.a 2>/dev/null || true   # keep it lean
-          du -sh llvm
+          if [ "$installed" != 1 ]; then
+            echo "::warning::apt.llvm.org unavailable; falling back to the runner's preinstalled clang-18"
+            sudo rm -f /etc/apt/sources.list.d/llvm18.list
+            sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18 \
+              || sudo apt-get install -y --no-install-recommends clang lld llvm
+          fi
+          ls "$LLVM_DIR" 2>/dev/null | head -20 || true
 
       - name: Toolchain env
+        # Build one flat, version-pinned bin dir and put it first on PATH, so that
+        # neither the runner's gcc nor an unrelated llvm-* can leak into the build.
         run: |
           set -e
-          echo "$GITHUB_WORKSPACE/toolchains/llvm/bin" >> "$GITHUB_PATH"
-          "$GITHUB_WORKSPACE/toolchains/llvm/bin/clang" --version | tee /tmp/clang-version
-          "$GITHUB_WORKSPACE/toolchains/llvm/bin/ld.lld" --version | head -1 | tee -a /tmp/clang-version
-          grep -q "version 18" /tmp/clang-version || {
-            echo "::error::expected clang 18, got $(clang --version | head -1)"; exit 1; }
+          sudo mkdir -p /opt/llvm18/bin
+          for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump \
+                   llvm-readelf llvm-strip llvm-size llvm-cov; do
+            for cand in "$LLVM_DIR/$t" "/usr/bin/${t}-18" "/usr/bin/$t"; do
+              if [ -x "$cand" ] && "$cand" --version 2>/dev/null | grep -Eq "(version|LLD) $LLVM_VER"; then
+                sudo ln -sf "$cand" "/opt/llvm18/bin/$t"; break
+              fi
+            done
+            test -x "/opt/llvm18/bin/$t" || { echo "::error::missing $t (clang/LLVM $LLVM_VER)"; exit 1; }
+          done
+          echo "/opt/llvm18/bin" >> "$GITHUB_PATH"
+          /opt/llvm18/bin/clang --version | tee /tmp/clang-version
+          /opt/llvm18/bin/ld.lld --version | tee -a /tmp/clang-version
+          grep -q "version $LLVM_VER" /tmp/clang-version || {
+            echo "::error::expected LLVM $LLVM_VER"; exit 1; }
+          echo "--- tools the kernel must NOT fall back to ---"
+          for t in aarch64-linux-gnu-ld aarch64-linux-gnu-as; do
+            if command -v "$t" >/dev/null; then
+              echo "::warning::$t is installed ($(command -v $t)) -- it is deliberately not used"
+            else
+              echo "no $t on PATH (as intended)"
+            fi
+          done
 
       - name: Integration audit (KernelSU / SuSFS v2.3.0 / NoMount)
         run: |
@@ -137,6 +158,7 @@ jobs:
             echo "| SuSFS | $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '\"') ($(grep -m1 'define SUSFS_VARIANT' include/linux/susfs.h | awk '{print $3}' | tr -d '\"')) |"
             echo "| NoMount | v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}') |"
             echo "| clang | $(clang --version | head -1) |"
+            echo "| linker | $(ld.lld --version | head -1) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Configure
@@ -197,7 +219,7 @@ jobs:
           find AK3 -name .gitignore -delete
           cp "out/arch/arm64/boot/${KERNEL_FILE}" "AK3/${KERNEL_FILE}"
           sed -i "s|^kernel.string=.*|kernel.string=OpenELA 4.14 + KernelSU-Next + SuSFS + NoMount|" AK3/anykernel.sh
-          sed -i "s|^kernel.compiler=.*|kernel.compiler=clang 18 (LLVM ${LLVM_VER}) + ld.lld, no gcc|" AK3/anykernel.sh
+          sed -i "s|^kernel.compiler=.*|kernel.compiler=clang 18 (apt.llvm.org) + ld.lld, no gcc|" AK3/anykernel.sh
           sed -i "s|^kernel.made=.*|kernel.made=Saamitk / arena agent|" AK3/anykernel.sh
           sed -i "s|^kernel.version=.*|kernel.version=$(make -s kernelversion)|" AK3/anykernel.sh
           sed -i "s|^message.word=.*|message.word=KernelSU + SuSFS + NoMount|" AK3/anykernel.sh
@@ -206,7 +228,7 @@ jobs:
           SuSFS: $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '"') (NON-GKI)
           NoMount: v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}')
           eBPF: 5.10-level backport already in this tree (verified; see docs/root-integration.md#ebpf)
-          Toolchain: clang ${LLVM_VER}, ld.lld, LLVM_IAS=1 (no gcc)
+          Toolchain: clang $(/opt/llvm18/bin/clang --version | head -1), ld.lld, LLVM_IAS=1 (no gcc)
           Built: ${BUILD_DATE} UTC
           Kernel image in this zip: ${KERNEL_FILE}
           EOF
