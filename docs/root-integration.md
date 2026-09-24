@@ -29,6 +29,7 @@ fs/{Makefile,Kconfig}               nomount wiring
 tools/root-integration/
   apply_ksu_hooks.py                the hook installer (idempotent, --verify audits)
   audit_hooks.sh                    full integration audit (used by CI)
+  check_susfs_symbols.py            fork-vs-port symbol cross-check (used by CI)
   upstreams.json                    exact upstream pins
   patches/                          provenance diff of this integration
   patches/susfs/                    the SuSFS 4.14 patch that was applied
@@ -126,7 +127,7 @@ CONFIG_KSU_SUSFS=y
 CONFIG_KSU_SUSFS_SUS_PATH=y
 CONFIG_KSU_SUSFS_SUS_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set   <-- required, see below
 CONFIG_KSU_SUSFS_SPOOF_UNAME=y
 CONFIG_KSU_SUSFS_ENABLE_LOG=y
 CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
@@ -137,6 +138,26 @@ CONFIG_KSU_SUSFS_SUS_MAP=y
 CONFIG_NOMOUNT=y
 CONFIG_KALLSYMS_ALL=y
 ```
+
+**`CONFIG_KSU_SUSFS_TRY_UMOUNT` must stay off.** The fork calls `susfs_try_umount()`
+(`hook/setuid_hook.c`) and `susfs_add_try_umount()` (`supercall/supercall.c`) whenever
+that symbol is on, but this SuSFS v2.3.0-for-4.14 port implements neither (it keeps only
+the now-deprecated `CMD_SUSFS_ADD_TRY_UMOUNT` id), so enabling it is a
+compile/link failure — this was the first real build break of the tree:
+
+```
+drivers/kernelsu/supercall/supercall.c:158:13: error: implicit declaration of function 'susfs_add_try_umount' [-Werror,-Wimplicit-function-declaration]
+```
+
+With the symbol off, the fork's own zygote umount path is used instead
+(`feature/kernel_umount.c::ksu_handle_umount()`, driven by the `mount_list` supercalls
+`KSU_UMOUNT_ADD/DEL/GETSIZE`/`WIPE`), which is the functional equivalent here and is
+also what the deprecated susfs userspace command no longer needs. `tools/root-integration/check_susfs_symbols.py`
+cross-checks *every* `susfs_*` call in the fork against the definitions this port
+provides, honouring the guards in the defconfig, so this class of fork/port skew fails
+in the CI audit step rather than 9 minutes into the build (it also confirms
+`CONFIG_KSU_SUSFS_SUS_MEMFD` must stay off for the same reason: no
+`susfs_add_sus_memfd()` in this port).
 
 `CONFIG_KSU_SYSCALL_TABLE_HOOK` stays off (needs ≥4.17). `# CONFIG_KPROBES is not set`
 is left as the upstream defconfig has it, which is exactly why `KSU_MANUAL_HOOK` is
