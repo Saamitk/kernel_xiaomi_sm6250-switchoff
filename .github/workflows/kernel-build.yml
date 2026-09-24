@@ -1,0 +1,279 @@
+name: Build kernel (KernelSU-Next + SuSFS + NoMount)
+
+# Builds the miatoll (Redmi Note 9 Pro / sm6250) 4.14 legacy kernel with a
+# pure clang/LLVM 18 toolchain -- clang compiles, LLVM's integrated assembler
+# assembles, ld.lld links and llvm-* replace every GNU binutils call.  No gcc,
+# no binutils-aarch64 is installed on the runner.
+#
+# Output: a flashable AnyKernel3 zip (artifact, and a GitHub Release when a
+# v* tag is pushed or make_release is checked).
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: "Defconfig (relative to arch/arm64/configs/)"
+        required: false
+        default: "vendor/xiaomi/miatoll_defconfig"
+      extra_make_flags:
+        description: "Extra make flags (advanced)"
+        required: false
+        default: ""
+      skip_olddefconfig:
+        description: "Use the defconfig verbatim (skip olddefconfig)"
+        type: boolean
+        required: false
+        default: false
+      make_release:
+        description: "Publish a GitHub release from this run"
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARCH: arm64
+  LLVM_VER: 18.1.8
+  LLVM_TARBALL: clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04
+  CROSS_COMPILE: aarch64-linux-gnu-
+  KSU_VERSION_TAG: ksun-legacy-susfs-v2-d999a2af
+  KSU_VERSION: "30000"
+
+jobs:
+  build:
+    name: clang 18 · miatoll
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                     /opt/hostedtoolcache/CodeQL /usr/local/.ghcup || true
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h
+
+      - name: Install host dependencies (deliberately no gcc / no binutils-aarch64)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex python3 zip unzip curl wget patch file \
+            ca-certificates libssl-dev libelf-dev
+          # The kernel *and* the host programs are built with clang (HOSTCC=clang),
+          # so the runner's gcc is never invoked. libc6-dev is preinstalled on the
+          # ubuntu-24.04 image and provides the headers the host objects need.
+          clang_ver=$(clang --version 2>/dev/null | head -1 || true)
+          echo "runner clang (unused, only for reference): $clang_ver"
+
+      - name: Cache LLVM
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: toolchains
+          key: llvm-${{ env.LLVM_VER }}-ubuntu18.04-v2
+
+      - name: Download LLVM ${{ env.LLVM_VER }}
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          mkdir -p toolchains
+          cd toolchains
+          ok=0
+          for url in \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}/${LLVM_TARBALL}.tar.xz" \
+            "https://releases.llvm.org/${LLVM_VER}/${LLVM_TARBALL}.tar.xz"; do
+            echo "::group::trying $url"
+            if curl -fL --retry 3 --retry-delay 5 -o llvm.tar.xz "$url"; then ok=1; break; fi
+            echo "::endgroup::"
+          done
+          [ "$ok" = "1" ] || { echo "::error::could not download LLVM ${LLVM_VER}"; exit 1; }
+          tar -xf llvm.tar.xz
+          rm -f llvm.tar.xz
+          mv "${LLVM_TARBALL}" llvm
+          rm -rf llvm/libclang* llvm/lib/*.a 2>/dev/null || true   # keep it lean
+          du -sh llvm
+
+      - name: Toolchain env
+        run: |
+          set -e
+          echo "$GITHUB_WORKSPACE/toolchains/llvm/bin" >> "$GITHUB_PATH"
+          "$GITHUB_WORKSPACE/toolchains/llvm/bin/clang" --version | tee /tmp/clang-version
+          "$GITHUB_WORKSPACE/toolchains/llvm/bin/ld.lld" --version | head -1 | tee -a /tmp/clang-version
+          grep -q "version 18" /tmp/clang-version || {
+            echo "::error::expected clang 18, got $(clang --version | head -1)"; exit 1; }
+
+      - name: Integration audit (KernelSU / SuSFS v2.3.0 / NoMount)
+        run: |
+          set -e
+          test -e drivers/kernelsu/Kconfig || { echo "::error::drivers/kernelsu symlink broken"; exit 1; }
+          test -f fs/nomount/nomount.c || { echo "::error::fs/nomount missing"; exit 1; }
+          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing"; exit 1; }
+          python3 tools/root-integration/apply_ksu_hooks.py --verify .
+
+      - name: Component versions
+        run: |
+          set -e
+          {
+            echo "### Components"
+            echo "| part | version |"
+            echo "|---|---|"
+            echo "| kernel | $(make -s kernelversion) |"
+            echo "| KernelSU-Next | ${KSU_VERSION_TAG} |"
+            echo "| SuSFS | $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '\"') ($(grep -m1 'define SUSFS_VARIANT' include/linux/susfs.h | awk '{print $3}' | tr -d '\"')) |"
+            echo "| NoMount | v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}') |"
+            echo "| clang | $(clang --version | head -1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure
+        run: |
+          set -e
+          DEFCONFIG="${{ inputs.defconfig || 'vendor/xiaomi/miatoll_defconfig' }}"
+          make O=out ARCH=$ARCH CC=clang "$DEFCONFIG"
+          if [ "${{ inputs.skip_olddefconfig }}" != "true" ]; then
+            make O=out ARCH=$ARCH CC=clang olddefconfig
+          fi
+          echo "--- root stack config ---"
+          grep -E "^(CONFIG_KSU|CONFIG_NOMOUNT|# CONFIG_KSU)" out/.config | head -40
+          for c in CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_NOMOUNT=y CONFIG_KSU_MANUAL_HOOK=y; do
+            grep -qx "$c" out/.config || { echo "::error::$c not enabled"; exit 1; }
+          done
+
+      - name: Build
+        # LLVM=1 is honoured by this tree's top Makefile: it swaps CC/LD/AR/NM/
+        # OBJCOPY/OBJDUMP/READELF/STRIP for clang + llvm-* (no GNU binutils).
+        # LLVM_IAS=1 keeps the integrated assembler (so no `as` is needed), and
+        # CLANG_TRIPLE gives clang the aarch64 target.
+        run: |
+          set -e
+          make -j$(nproc) O=out ARCH=$ARCH \
+            LLVM=1 LLVM_IAS=1 \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$CROSS_COMPILE \
+            LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip SIZE=llvm-size \
+            HOSTCC=clang HOSTCXX=clang++ HOSTLD=ld.lld HOSTAR=llvm-ar \
+            KCFLAGS="-Wno-error" \
+            KSU_VERSION_OVERRIDE=$KSU_VERSION \
+            KSU_VERSION_TAG_OVERRIDE=$KSU_VERSION_TAG \
+            ${{ inputs.extra_make_flags }} \
+            Image.gz modules 2>&1 | tee /tmp/build.log
+          echo "===== warnings: $(grep -c 'warning:' /tmp/build.log) | errors: $(grep -c 'error:' /tmp/build.log) ====="
+
+      - name: Verify build output
+        run: |
+          set -e
+          ls -la out/arch/arm64/boot/
+          file out/arch/arm64/boot/Image.gz
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "KERNEL_FILE=Image.gz-dtb" >> "$GITHUB_ENV"
+          else
+            echo "KERNEL_FILE=Image.gz" >> "$GITHUB_ENV"
+          fi
+          echo "--- root stack symbols in vmlinux ---"
+          llvm-nm out/vmlinux | grep -E " [TtDdBb] (ksu_|susfs_|nomount_)" | head -25
+          test "$(llvm-nm out/vmlinux | grep -c ' [Tt] ksu_')" -gt 0 || {
+            echo "::error::no KernelSU symbols in vmlinux"; exit 1; }
+
+      - name: Package AnyKernel3 flashable zip
+        run: |
+          set -e
+          BUILD_DATE="$(date -u +'%Y%m%d-%H%M')"
+          ZIP="miatoll-kernel-kernelsu-susfs-nomount-${BUILD_DATE}"
+          rm -rf AK3 && cp -a AnyKernel3 AK3
+          find AK3 -name .gitignore -delete
+          cp "out/arch/arm64/boot/${KERNEL_FILE}" "AK3/${KERNEL_FILE}"
+          sed -i "s|^kernel.string=.*|kernel.string=OpenELA 4.14 + KernelSU-Next + SuSFS + NoMount|" AK3/anykernel.sh
+          sed -i "s|^kernel.compiler=.*|kernel.compiler=clang 18 (LLVM ${LLVM_VER}) + ld.lld, no gcc|" AK3/anykernel.sh
+          sed -i "s|^kernel.made=.*|kernel.made=Saamitk / arena agent|" AK3/anykernel.sh
+          sed -i "s|^kernel.version=.*|kernel.version=$(make -s kernelversion)|" AK3/anykernel.sh
+          sed -i "s|^message.word=.*|message.word=KernelSU + SuSFS + NoMount|" AK3/anykernel.sh
+          cat > AK3/kernel-notes.txt <<EOF
+          KernelSU-Next (legacy+susfs line): ${KSU_VERSION_TAG}
+          SuSFS: $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '"') (NON-GKI)
+          NoMount: v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}')
+          eBPF: 5.10-level backport already in this tree (verified; see docs/root-integration.md#ebpf)
+          Toolchain: clang ${LLVM_VER}, ld.lld, LLVM_IAS=1 (no gcc)
+          Built: ${BUILD_DATE} UTC
+          Kernel image in this zip: ${KERNEL_FILE}
+          EOF
+          ( cd AK3 && zip -r9 "../${ZIP}.zip" * )
+          sha256sum "${ZIP}.zip" > "${ZIP}.zip.sha256sum"
+          echo "ZIP_NAME=${ZIP}.zip" >> "$GITHUB_ENV"
+          ls -la "${ZIP}.zip"; cat "${ZIP}.zip.sha256sum"
+
+      - name: Upload flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ak3-flashable-zip
+          path: |
+            ${{ env.ZIP_NAME }}
+            ${{ env.ZIP_NAME }}.sha256sum
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.make_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          if [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="ci-${GITHUB_SHA::7}"
+          fi
+          NOTES=$(cat <<'EOF'
+          ## miatoll — Redmi Note 9 Pro / 9S / POCO M2 Pro (sm6250, kernel 4.14 legacy, non-GKI)
+
+          In-tree root + stealth stack, built with **clang 18 / ld.lld (no gcc)**:
+
+          | component | state |
+          |---|---|
+          | KernelSU-Next (legacy + SUSFS line) | `CONFIG_KSU=y`, manual hooks (`CONFIG_KSU_MANUAL_HOOK=y`) |
+          | SuSFS v2.3.0 (NON-GKI) | sus_path, sus_mount, sus_kstat, try_umount, spoof_uname, cmdline spoof, open_redirect, sus_map, ksu/susfs symbol hiding |
+          | NoMount v2.0.0 | `CONFIG_NOMOUNT=y`, built-in VFS path redirection (no overlay/bind mounts) |
+          | eBPF | 5.10-era backport already present in this tree (BTF/CO-RE, struct_ops, ringbuf, local storage, iterators, bpf_lsm) |
+
+          **Flash**
+          1. Boot a custom recovery (TWRP / OrangeFox) — A-only, `boot` slot is handled by AnyKernel3.
+          2. Flash the zip below. AnyKernel3 backs up the current boot image to `/sdcard/`.
+          3. Reboot, install a KernelSU-Next manager (it must match the vendored manager signature), grant su.
+          4. Optional: flash the `susfs4ksu` / NoMount metamodule from inside the KSU manager.
+
+          **Notes / limits**
+          - SuSFS userspace (`ksu_susfs`) must be the v2.x build; the v1.5.x helper is incompatible.
+          - NoMount's prebuilt LKM does not apply here — it is compiled into the kernel, so just flash the NoMount module.
+          - `CONFIG_KPROBES` stays off; the KSU hooking is done with in-tree manual hooks (syscall-table patching is not used on 4.14).
+          EOF
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP_NAME" "$ZIP_NAME.sha256sum" --clobber
+          else
+            gh release create "$TAG" "$ZIP_NAME" "$ZIP_NAME.sha256sum" \
+              --target "$GITHUB_SHA" --title "$TAG" --notes "$NOTES"
+          fi
+          echo "### Release" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
+          retention-days: 7
+          if-no-files-found: ignore
