@@ -47,7 +47,7 @@ env:
   LLVM_DIR: /usr/lib/llvm-18/bin
   CROSS_COMPILE: aarch64-linux-gnu-
   KSU_VERSION_TAG: ksun-legacy-susfs-v2-d999a2af
-  KSU_VERSION: "30000"
+  KSU_VERSION: "33225"
 
 jobs:
   build:
