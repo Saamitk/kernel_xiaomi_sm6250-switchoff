@@ -78,6 +78,25 @@ else
   bad "fs/stat.c lacks <linux/susfs_def.h> -> 'undeclared identifier STATX_SUS_KSTAT'; run apply_ksu_hooks.py"
 fi
 
+sec "KernelSU umount wiring (path_umount)"
+# This fork's Kbuild injects can_umount()/path_umount() into fs/namespace.c when they
+# are missing -- but that happens while descending drivers/, i.e. after fs/ has been
+# compiled in this tree's build order, so the injected helper is never built and the
+# link fails with "ld.lld: error: undefined symbol: path_umount". The tree must carry
+# it (apply_ksu_hooks.py does that). If the fork stops injecting, this is harmless.
+if grep -q "KSU_HAS_PATH_UMOUNT" drivers/kernelsu/feature/kernel_umount.c 2>/dev/null; then
+  if grep -Eq "^int path_umount\(" fs/namespace.c; then
+    ok "fs/namespace.c defines path_umount() (fork selects the path_umount flavour)"
+    grep -Eq "^static int can_umount\(" fs/namespace.c && ok "fs/namespace.c defines can_umount() too" || bad "path_umount() present but can_umount() missing"
+  elif grep -Eq "^static bool is_mnt_ns_file" fs/namespace.c; then
+    bad "fs/namespace.c has no path_umount(); run apply_ksu_hooks.py (the Kbuild injection is too late in the build order)"
+  else
+    soft "no is_mnt_ns_file() anchor in fs/namespace.c; cannot wire path_umount -- KSU umount would need manual work"
+  fi
+else
+  ok "this fork does not use path_umount (set_fs/sys_umount fallback); nothing to wire"
+fi
+
 sec "SuSFS symbol resolution (fork calls vs what the port provides)"
 if python3 tools/root-integration/check_susfs_symbols.py . "$DEF"; then :; else bad "susfs_* symbol referenced by the fork has no definition (see above)"; fi
 

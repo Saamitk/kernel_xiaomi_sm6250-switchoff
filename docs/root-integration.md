@@ -57,6 +57,31 @@ Call sites inserted (all inside `#ifdef CONFIG_KSU`):
 | `kernel/sys.c` | `__do_sys_setresuid()` | `ksu_handle_setresuid(ruid/euid/suid)` |
 | `security/selinux/hooks.c` | `selinux_setprocattr()` | `ksu_handle_selinux_setprocattr()` |
 
+### path_umount(): why this tree carries it
+
+`drivers/kernelsu/feature/kernel_umount.c` compiles the `path_umount()` flavour when
+the kernel is ≥5.9 **or** `KSU_HAS_PATH_UMOUNT` is set, and the fork's
+`drivers/kernelsu/Kbuild` tries to be helpful: if `^int path_umount` is *absent* from
+`fs/namespace.c` it `sed -i`-inserts `can_umount()` + `path_umount()`, then defines
+`-DKSU_HAS_PATH_UMOUNT` because the (now matching) re-grep says the helper exists.
+That is a trap on this tree: `Kbuild` is parsed while make descends into `drivers/`
+(`drivers-y`), which for this Makefile happens **after** `fs/` (`core-y`) has already
+been compiled -- so the injected text never reaches `fs/namespace.o` and the link dies
+with a *very* misleading error:
+
+```
+ld.lld: error: undefined symbol: path_umount
+>>> referenced by kernel_umount.c
+>>>               drivers/kernelsu/feature/kernel_umount.o:(umount_tw_func) in archive built-in.a
+```
+
+`apply_ksu_hooks.py` therefore inserts the 5.11 `can_umount()`/`path_umount()` pair
+into `fs/namespace.c` itself (byte-identical to what the fork would inject, placed just
+before `is_mnt_ns_file()` so `do_umount()`, `may_mount()`, `mntput_no_expire()` and
+`check_mnt()` are already in scope). Both Kbuild greps then match, the injection is
+skipped, and the helper is compiled normally. `audit_hooks.sh` enforces the invariant
+("fork uses `KSU_HAS_PATH_UMOUNT` ⇒ the tree must define `path_umount`").
+
 ### Port fixup required by the SuSFS 4.14 patch
 
 `include/linux/susfs_def.h` of this SuSFS port keeps `STATX_SUS_KSTAT` /
@@ -83,7 +108,7 @@ Deliberately **not** done, and why:
 
 * `security/security.c` — this fork does not export `security_sb_*` hooks there; its SELinux work lives in `feature/selinux_hide.c` and the vendored `security/selinux/avc.c` SuSFS hooking.
 * `ksu_handle_newfstat_ret` / `fstat64_ret` / `init_mark_tracker` — no such handlers in `legacy-susfs-v2`; calling them = link error. The compat `COMPAT_SYSCALL_DEFINE4(newfstatat)` in `fs/stat.c` is left unhooked (3rd arg is a compat `int`, so `&dfd` would be a signedness mismatch).
-* `path_umount()`/`can_umount()` are **not** added to `fs/namespace.c`: this 4.14 has no `static int can_umount` for the fork's `Kbuild` to extend, and the fork already carries the `set_fs()` + `ksys_umount()` fallback (`feature/kernel_umount.c`) which is the intended pre‑5.11 path for `try_umount`.
+* (superseded, see "path_umount()" below) `path_umount()`/`can_umount()` are **not** added to `fs/namespace.c`: this 4.14 has no `static int can_umount` for the fork's `Kbuild` to extend, and the fork already carries the `set_fs()` + `ksys_umount()` fallback (`feature/kernel_umount.c`) which is the intended pre‑5.11 path for `try_umount`.
 * The upstream helper scripts in `tools/root-integration/scripts/` are kept for reference **but must not be run on this tree**: `syscall_hook_patches.sh` emits a `ksu_handle_sys_read(unsigned int fd, char __user **, size_t *)` signature that this fork does not have, `susfs_inline_hook_patches.sh` calls handlers that don't exist here, and both are non-idempotent (`sed -i` appends, and they skip any file that already mentions `ksu_handle`). Use `apply_ksu_hooks.py` instead.
 
 ## Reproducing the integration from a clean tree

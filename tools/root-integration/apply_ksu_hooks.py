@@ -30,6 +30,7 @@ usage:
 """
 
 import os
+import re
 import sys
 
 ARGV = sys.argv[1:]
@@ -330,7 +331,89 @@ def fix_stat_c_susfs_include(src):
     return src, "added <linux/susfs_def.h> to the SUS_KSTAT block"
 
 
-FIXUPS = [("fs/stat.c", fix_stat_c_susfs_include)]
+
+# ---------------------------------------------------------------- namespace --
+# KernelSU-Next's feature/kernel_umount.c picks the path_umount() flavour when
+# either the kernel is >=5.9 or the fork's Kbuild detected/injected the helper:
+#
+#     Kbuild:194  if `^int path_umount` is NOT in fs/namespace.c -> sed-inject it
+#     Kbuild:314  if `int  path_umount` IS in fs/namespace.c    -> -DKSU_HAS_PATH_UMOUNT
+#
+# The injection therefore *looks* self-service, but it happens when make descends
+# into drivers/ -- which in this tree's build order (core-y: kernel mm fs ... then
+# drivers-y: drivers/) is AFTER fs/namespace.o has already been compiled. The
+# injected helper never gets built and the final link dies with
+#
+#     ld.lld: error: undefined symbol: path_umount
+#     >>> referenced by kernel_umount.c
+#
+# So the helper must live in the tree. Both greps then match, the injection is
+# skipped, and the pair below is compiled as part of fs/namespace.o. It is the
+# 5.11 upstream pair (== what the fork would inject), placed right before
+# is_mnt_ns_file() so do_umount(), may_mount(), mntput_no_expire() and
+# check_mnt() are all already visible (no forward declarations).
+NS_ANCHOR = "static bool is_mnt_ns_file(struct dentry *dentry)"
+NS_BLOCK = """#ifdef CONFIG_KSU
+/*
+ * KernelSU-Next: umount a specific mount from kernel space (see
+ * drivers/kernelsu/feature/kernel_umount.c). Upstream grew path_umount() in
+ * 5.11; this is that pair, needed because the fork's Kbuild-time injection
+ * lands too late for this tree's build order.
+ */
+static int can_umount(const struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+
+	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+		return -EINVAL;
+	if (!may_mount())
+		return -EPERM;
+	if (path->dentry != path->mnt->mnt_root)
+		return -EINVAL;
+	if (!check_mnt(mnt))
+		return -EINVAL;
+	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+		return -EINVAL;
+	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	return 0;
+}
+
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	int ret;
+
+	ret = can_umount(path, flags);
+	if (!ret)
+		ret = do_umount(mnt, flags);
+
+	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
+	dput(path->dentry);
+	mntput_no_expire(mnt);
+	return ret;
+}
+#endif /* CONFIG_KSU */
+
+"""
+
+
+def add_path_umount_helper(src):
+    if re.search(r"^int path_umount\(", src, re.M):
+        return src, "fs/namespace.c already provides path_umount()"
+    n = src.count(NS_ANCHOR)
+    if n != 1:
+        raise AnchorError("fs/namespace.c: expected exactly one %r definition, found %d "
+                          "(the KernelSU Kbuild injection uses the same anchor, so a "
+                          "missing/moved is_mnt_ns_file() means the umount feature "
+                          "cannot be wired here)" % (NS_ANCHOR, n))
+    src = src.replace(NS_ANCHOR, NS_BLOCK + NS_ANCHOR, 1)
+    return src, "inserted can_umount()/path_umount() before is_mnt_ns_file()"
+
+
+
+FIXUPS = [("fs/stat.c", fix_stat_c_susfs_include),
+          ("fs/namespace.c", add_path_umount_helper)]
 
 
 def audit():
@@ -358,6 +441,13 @@ def audit():
     except OSError:
         ok = False
     print("%-26s %-32s %s" % ("fs/stat.c", "susfs_def.h include", "OK" if ok else "MISSING"))
+    rc |= 0 if ok else 1
+    print("-- KernelSU umount helper --")
+    try:
+        ok = bool(re.search(r"^int path_umount\(", read("fs/namespace.c"), re.M))
+    except OSError:
+        ok = False
+    print("%-26s %-32s %s" % ("fs/namespace.c", "path_umount() defined", "OK" if ok else "MISSING"))
     rc |= 0 if ok else 1
     print("-- tree wiring --")
     for path, marker in WIRING:
