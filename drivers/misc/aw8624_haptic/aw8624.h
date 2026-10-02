@@ -315,6 +315,7 @@ struct aw8624 {
 	struct delayed_work ram_work;
 	struct delayed_work stop_work;
     struct timed_output_dev timed_output;
+	struct led_classdev vib_led;
 
 	struct fileops fileops;
 	struct ram ram;
