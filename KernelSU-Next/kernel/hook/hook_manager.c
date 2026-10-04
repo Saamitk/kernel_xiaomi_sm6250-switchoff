@@ -10,6 +10,7 @@
 #include <trace/events/syscalls.h>
 
 #include "policy/allowlist.h"
+#include "policy/app_profile.h"
 #include "arch.h"
 #include "klog.h" // IWYU pragma: keep
 #include "hook_manager.h"
@@ -373,7 +374,7 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
 			uid_t ruid = (uid_t)PT_REGS_PARM1(regs);
 			uid_t euid = (uid_t)PT_REGS_PARM2(regs);
 			uid_t suid = (uid_t)PT_REGS_PARM3(regs);
-			ksu_handle_setresuid(ruid, euid, suid);
+			ksu_handle_setresuid(current_uid().val, ruid);
 			return;
 		}
 	}

@@ -2,8 +2,8 @@
 # Audit of the in-tree root stack for this 4.14 non-GKI kernel.
 #
 # Checks that KernelSU-Next, SuSFS v2.3.0 (NON-GKI) and NoMount v2.0.0 are wired
-# into the build, that every manual hook call site exists with the signature this
-# KernelSU fork actually declares, and that the defconfig enables the stack.
+# into the build, that every manual hook call site matches the pinned official
+# KernelSU-Next legacy API, and that root/DroidSpaces defconfig options are present.
 # Run from anywhere; the tree root is derived from the script location.
 #
 #   ./tools/root-integration/audit_hooks.sh [kernel-tree]
@@ -11,8 +11,10 @@
 # Exit code 0 = integration complete.  This is the gate used by
 # .github/workflows/kernel-build.yml before compiling.
 set -u
-ROOT=${1:-"$(cd "$(dirname "$0")/../.." && pwd)"}
-cd "$ROOT" || { echo "no kernel tree at $ROOT"; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT=${1:-"$(cd "$SCRIPT_DIR/../.." && pwd)"}
+ROOT="$(cd "$ROOT" 2>/dev/null && pwd)" || { echo "no kernel tree at ${1:-$ROOT}"; exit 1; }
+cd "$ROOT" || exit 1
 fail=0; warn=0
 DEF=arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
 [ -f "$DEF" ] || DEF=$(ls arch/arm64/configs/vendor/*/*_defconfig 2>/dev/null | head -1)
@@ -79,11 +81,23 @@ else
 fi
 
 sec "SuSFS symbol resolution (fork calls vs what the port provides)"
-if python3 tools/root-integration/check_susfs_symbols.py . "$DEF"; then :; else bad "susfs_* symbol referenced by the fork has no definition (see above)"; fi
+if python3 "$SCRIPT_DIR/check_susfs_symbols.py" "$ROOT" "$DEF"; then :; else bad "susfs_* symbol referenced by the fork has no definition (see above)"; fi
 
 sec "KernelSU manual hook call sites (KSU_MANUAL_HOOK)"
-python3 tools/root-integration/apply_ksu_hooks.py --verify . || bad "hook call sites incomplete"
+python3 "$SCRIPT_DIR/apply_ksu_hooks.py" --verify "$ROOT" || bad "hook call sites incomplete"
 
+sec "upstream KernelSU API compatibility"
+if grep -q 'ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)' KernelSU-Next/kernel/hook/setuid_hook.h && \
+   grep -q 'ksu_handle_setresuid(current_uid().val, ruid)' kernel/sys.c; then
+  ok "setresuid manual hook uses upstream two-UID API"
+else
+  bad "setresuid manual hook does not match upstream two-UID API"
+fi
+if grep -q 'ksu_hide_setprocattr' security/selinux/hooks.c || grep -R -q 'ksu_hide_setprocattr' KernelSU-Next/kernel; then
+  bad "obsolete ksu_hide_setprocattr hook remains"
+else
+  ok "no obsolete external SELinux setprocattr hook"
+fi
 
 sec "defconfig"
 if [ -f "$DEF" ]; then
@@ -100,14 +114,65 @@ if [ -f "$DEF" ]; then
   if grep -qx 'CONFIG_KSU_SUSFS_TRY_UMOUNT=y' "$DEF"; then
     bad "CONFIG_KSU_SUSFS_TRY_UMOUNT=y but this SuSFS port provides no susfs_try_umount()/susfs_add_try_umount() -> build/link error"
   else
-    ok "  CONFIG_KSU_SUSFS_TRY_UMOUNT off (fork's own ksu_handle_umount() path is used)"
+    ok "  CONFIG_KSU_SUSFS_TRY_UMOUNT off (upstream KSU zygote umount path is used)"
+  fi
+  if grep -qx 'CONFIG_KSU_SUSFS_SUS_MEMFD=y' "$DEF"; then
+    bad "CONFIG_KSU_SUSFS_SUS_MEMFD=y but this SuSFS port provides no susfs_add_sus_memfd() -> build/link error"
+  else
+    ok "  CONFIG_KSU_SUSFS_SUS_MEMFD off (helper absent from this 4.14 port)"
   fi
 else
   soft "no defconfig found; skipping defconfig checks"
 fi
 
+sec "SELinux enforcement"
+if grep -qx 'CONFIG_SECURITY_SELINUX=y' "$DEF" && \
+   grep -qx 'CONFIG_DEFAULT_SECURITY_SELINUX=y' "$DEF" && \
+   grep -qx '# CONFIG_SECURITY_SELINUX_DEVELOP is not set' "$DEF" && \
+   grep -qx '# CONFIG_SECURITY_SELINUX_BOOTPARAM is not set' "$DEF" && \
+   grep -qx '# CONFIG_SECURITY_SELINUX_DISABLE is not set' "$DEF"; then
+  ok "SELinux enabled, development mode/boot-disable/runtime-disable paths off"
+else
+  bad "miatoll must build SELinux hard-enforcing with no boot/runtime disable option"
+fi
+
+sec "DroidSpaces legacy support"
+if [ -f "$DEF" ]; then
+  for c in CONFIG_SYSCTL=y CONFIG_SYSVIPC=y CONFIG_POSIX_MQUEUE=y CONFIG_NAMESPACES=y \
+           CONFIG_IPC_NS=y CONFIG_USER_NS=y CONFIG_PID_NS=y CONFIG_UTS_NS=y \
+           CONFIG_NET_NS=y CONFIG_SECCOMP=y CONFIG_SECCOMP_FILTER=y \
+           CONFIG_CGROUPS=y CONFIG_CGROUP_DEVICE=y CONFIG_CGROUP_SCHED=y \
+           CONFIG_FAIR_GROUP_SCHED=y CONFIG_CGROUP_FREEZER=y CONFIG_CGROUP_NET_PRIO=y \
+           CONFIG_MEMCG=y CONFIG_CGROUP_PIDS=y CONFIG_CGROUP_CPUACCT=y \
+           CONFIG_DEVTMPFS=y CONFIG_OVERLAY_FS=y CONFIG_TMPFS_POSIX_ACL=y \
+           CONFIG_TMPFS_XATTR=y CONFIG_FW_LOADER=y CONFIG_FW_LOADER_USER_HELPER=y \
+           CONFIG_VETH=y CONFIG_BRIDGE=y CONFIG_NETFILTER=y CONFIG_NETFILTER_ADVANCED=y \
+           CONFIG_BRIDGE_NETFILTER=y CONFIG_NF_CONNTRACK=y CONFIG_NF_CT_NETLINK=y \
+           CONFIG_IP_NF_IPTABLES=y CONFIG_IP_NF_FILTER=y CONFIG_NF_NAT=y \
+           CONFIG_NF_TABLES=y CONFIG_NF_NAT_REDIRECT=y CONFIG_IP_ADVANCED_ROUTER=y \
+           CONFIG_IP_MULTIPLE_TABLES=y CONFIG_NF_CONNTRACK_IPV4=y CONFIG_NF_NAT_IPV4=y \
+           CONFIG_IP_NF_NAT=y CONFIG_IP_NF_TARGET_MASQUERADE=y \
+           CONFIG_NETFILTER_XT_TARGET_TCPMSS=y CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y \
+           CONFIG_IPV6=y CONFIG_IPV6_MULTIPLE_TABLES=y CONFIG_NF_CONNTRACK_IPV6=y \
+           CONFIG_NF_NAT_IPV6=y CONFIG_IP6_NF_IPTABLES=y CONFIG_IP6_NF_FILTER=y \
+           CONFIG_IP6_NF_MANGLE=y CONFIG_IP6_NF_NAT=y \
+           CONFIG_IP6_NF_TARGET_MASQUERADE=y; do
+    grep -qx "$c" "$DEF" && ok "  $c" || bad "  missing DroidSpaces option: $c"
+  done
+  if grep -qx 'CONFIG_SCHED_WALT=y' "$DEF" && ! grep -qx 'CONFIG_CFS_BANDWIDTH=y' "$DEF"; then
+    note "CFS_BANDWIDTH is unavailable with SCHED_WALT here; DroidSpaces CPU quotas may be unsupported"
+  fi
+fi
+
+sec "DroidSpaces cgroup path compatibility"
+if python3 "$SCRIPT_DIR/apply_droidspaces_cgroup.py" --verify "$ROOT"; then
+  ok "DroidSpaces cgroup controller-prefix compatibility patch is present"
+else
+  bad "DroidSpaces cgroup controller-prefix compatibility patch is missing or inconsistent"
+fi
+
 sec "userspace expectations (cannot be checked from the kernel tree)"
-note "Manager must match the vendored KernelSU-Next (this fork ships root as a metamodule for legacy kernels)."
+note "Manager must match the pinned official KernelSU-Next legacy source/UAPI."
 note "susfs4ksu module must provide the v2.x 'ksu_susfs' helper; v1.5.x 'susfs4ksu.sh' is incompatible."
 note "NoMount's 'nm' CLI + profiles ship as a KSU/APatch metamodule; rules live in the kernel keyring, not in /dev."
 

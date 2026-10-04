@@ -10,13 +10,7 @@
 #include "objsec.h"
 #endif // #ifdef CONFIG_KSU_SUSFS
 #include <linux/thread_info.h>
-#include <linux/sched.h>
-#if __has_include(<linux/sched/task.h>)
-#include <linux/sched/task.h>
-#endif
-#if __has_include(<linux/sched/signal.h>)
-#include <linux/sched/signal.h>
-#endif
+
 #include "uapi/supercall.h"
 #include "supercall/internal.h"
 #include "arch.h" // IWYU pragma: keep
@@ -35,23 +29,20 @@
 #include "sulog/fd.h"
 #include "supercall/supercall.h"
 
-#include "tiny_sulog.h"
-
 static int do_grant_root(void __user *arg)
 {
-	int ret;
+    int ret;
     __u32 audit_uid = current_uid().val;
     __u32 audit_euid = current_euid().val;
-    
-    // we already check uid above on allowed_for_su()
 
-    write_sulog('i'); // log ioctl escalation
+	// we already check uid above on allowed_for_su()
 
     pr_info("allow root for: %d\n", audit_uid);
     ret = escape_with_root_profile();
     ksu_sulog_emit_grant_root(ret, audit_uid, audit_euid, GFP_KERNEL);
+    ksu_compat_sulog('i');
 
-    return ret;
+	return ret;
 }
 
 static int do_get_info(void __user *arg)
@@ -61,22 +52,13 @@ static int do_get_info(void __user *arg)
 	if (ksuver_override) {
 		cmd.version = ksuver_override;
 	}
-	
+
 #ifdef MODULE
-	cmd.flags |= KSU_GET_INFO_FLAG_LKM;
+    cmd.flags |= KSU_GET_INFO_FLAG_LKM;
     if (ksu_bundled) {
         cmd.flags |= KSU_GET_INFO_FLAG_BUNDLED;
     }
 #endif
-
-	if (is_manager()) {
-		cmd.flags |= KSU_GET_INFO_FLAG_MANAGER;
-	}
-	if (ksu_late_loaded) {
-		cmd.flags |= KSU_GET_INFO_FLAG_LATE_LOAD;
-	}
-	cmd.features = KSU_FEATURE_MAX;
-
     if (is_manager()) {
         cmd.flags |= KSU_GET_INFO_FLAG_MANAGER;
     }
@@ -108,27 +90,28 @@ static int do_get_info_legacy(void __user *arg)
     }
 #endif
 
-    if (is_manager()) {
-        cmd.flags |= KSU_GET_INFO_FLAG_MANAGER;
-    }
-    if (ksu_late_loaded) {
-        cmd.flags |= KSU_GET_INFO_FLAG_LATE_LOAD;
-    }
+	if (is_manager()) {
+		cmd.flags |= KSU_GET_INFO_FLAG_MANAGER;
+	}
+	if (ksu_late_loaded) {
+		cmd.flags |= KSU_GET_INFO_FLAG_LATE_LOAD;
+	}
 #ifdef EXPECTED_SIZE2
     cmd.flags |= KSU_GET_INFO_FLAG_PR_BUILD;
 #endif
-    cmd.features = KSU_FEATURE_MAX;
-    
-    if (copy_to_user(arg, &cmd, sizeof(cmd))) {
-        pr_err("get_version: copy_to_user failed\n");
-        return -EFAULT;
-    }
+	cmd.features = KSU_FEATURE_MAX;
 
-    return 0;
+	if (copy_to_user(arg, &cmd, sizeof(cmd))) {
+		pr_err("get_version: copy_to_user failed\n");
+		return -EFAULT;
+	}
+
+	return 0;
 }
 
 static int do_report_event(void __user *arg)
 {
+	static bool services_started = false;
 	struct ksu_report_event_cmd cmd;
 
 	if (copy_from_user(&cmd, arg, sizeof(cmd))) {
@@ -138,6 +121,9 @@ static int do_report_event(void __user *arg)
 	switch (cmd.event) {
 	case EVENT_POST_FS_DATA: {
 		static bool post_fs_data_lock = false;
+
+		// Reset for emulated soft reboot
+		services_started = false;
 		if (!post_fs_data_lock) {
 			post_fs_data_lock = true;
 			if (ksu_late_loaded) {
@@ -159,7 +145,7 @@ static int do_report_event(void __user *arg)
 				pr_info("boot_complete triggered\n");
 				on_boot_completed();
 #ifdef CONFIG_KSU_SUSFS
-            	susfs_start_sdcard_monitor_fn();
+				susfs_start_sdcard_monitor_fn();
 #endif // #ifdef CONFIG_KSU_SUSFS
 			}
 		}
@@ -169,6 +155,15 @@ static int do_report_event(void __user *arg)
 		pr_info("module mounted!\n");
 		on_module_mounted();
 		break;
+	}
+	case EVENT_SERVICES: {
+		if (services_started) {
+			pr_info("services already started, skipping\n");
+			return 0;
+		}
+		services_started = true;
+		pr_info("services triggered\n");
+		return 1;
 	}
 	default:
 		break;
@@ -476,7 +471,7 @@ static int do_get_wrapper_fd(void __user *arg) {
         pr_err("get_wrapper_fd: copy_from_user failed\n");
         return -EFAULT;
 	}
-	
+
 	return ksu_install_file_wrapper(cmd.fd);
 }
 
@@ -500,18 +495,12 @@ static int do_manage_mark(void __user *arg)
 			pr_err("manage_mark: get failed for pid %d: %d\n", cmd.pid, ret);
 			return ret;
 		}
+#else
+		ret = susfs_is_current_proc_umounted() ? 0 : 1;
+		pr_info("manage_mark: ret for pid %d: %d\n", cmd.pid, ret);
+#endif
 		cmd.result = (u32)ret;
 		break;
-#else
-        if (susfs_is_current_proc_umounted()) {
-            ret = 0; // SYSCALL_TRACEPOINT is NOT flagged
-        } else {
-            ret = 1; // SYSCALL_TRACEPOINT is flagged
-        }
-        pr_info("manage_mark: ret for pid %d: %d\n", cmd.pid, ret);
-        cmd.result = (u32)ret;
-        break;
-#endif // #ifndef CONFIG_KSU_SUSFS
 	}
 	case KSU_MARK_MARK: {
 #ifndef CONFIG_KSU_SUSFS
@@ -526,10 +515,9 @@ static int do_manage_mark(void __user *arg)
 			}
 		}
 #else
-        if (cmd.pid != 0) {
-            return ret;
-        }
-#endif // #ifndef CONFIG_KSU_SUSFS
+		if (cmd.pid != 0)
+			return ret;
+#endif
 		break;
 	}
 	case KSU_MARK_UNMARK: {
@@ -545,18 +533,18 @@ static int do_manage_mark(void __user *arg)
 			}
 		}
 #else
-        if (cmd.pid != 0) {
-            return ret;
-        }
-#endif // #ifndef CONFIG_KSU_SUSFS
+		if (cmd.pid != 0)
+			return ret;
+#endif
 		break;
 	}
 	case KSU_MARK_REFRESH: {
 #ifndef CONFIG_KSU_SUSFS
+		ksu_mark_running_process();
 		pr_info("manage_mark: refreshed running processes\n");
 #else
-        pr_info("susfs: cmd: KSU_MARK_REFRESH: do nothing\n");
-#endif // #ifndef CONFIG_KSU_SUSFS
+		pr_info("manage_mark: SusFS refresh is not applicable\n");
+#endif
 		break;
 	}
 	default: {
@@ -656,7 +644,7 @@ static int add_try_umount(void __user *arg)
     struct mount_entry *new_entry, *entry, *tmp;
     struct ksu_add_try_umount_cmd cmd;
     char buf[256] = {0};
-	
+
     if (copy_from_user(&cmd, arg, sizeof cmd))
         return -EFAULT;
 
@@ -678,8 +666,8 @@ static int add_try_umount(void __user *arg)
         case KSU_UMOUNT_ADD: {
             long len = strncpy_from_user(buf, (const char __user *)cmd.arg, 256);
             if (len <= 0)
-                return -EFAULT;    
-            
+                return -EFAULT;
+
             buf[sizeof(buf) - 1] = '\0';
 
             new_entry = kzalloc(sizeof(*new_entry), GFP_KERNEL);
@@ -726,7 +714,7 @@ static int add_try_umount(void __user *arg)
             long len = strncpy_from_user(buf, (const char __user *)cmd.arg, sizeof(buf) - 1);
             if (len <= 0)
                 return -EFAULT;
-            
+
             buf[sizeof(buf) - 1] = '\0';
 
             down_write(&mount_list_lock);
@@ -739,16 +727,16 @@ static int add_try_umount(void __user *arg)
                 }
             }
             up_write(&mount_list_lock);
-            
+
             return 0;
         }
-        
+
 		// this way userspace can deduce the memory it has to prepare.
 		case KSU_UMOUNT_GETSIZE: {
 			// check for pointer first
 			if (!cmd.arg)
 				return -EFAULT;
-		
+
 			size_t total_size = 0; // size of list in bytes
 
 			down_read(&mount_list_lock);
@@ -758,13 +746,13 @@ static int add_try_umount(void __user *arg)
 			up_read(&mount_list_lock);
 
 			pr_info("cmd_add_try_umount: total_size: %zu\n", total_size);
-			
+
 			if (copy_to_user((size_t __user *)cmd.arg, &total_size, sizeof(total_size)))
 				return -EFAULT;
 
 			return 0;
 		}
-		
+
 		// WARNING! this is straight up pointerwalking.
 		// this way we dont need to redefine the ioctl defs.
 		// this also avoids us needing to kmalloc
@@ -772,18 +760,18 @@ static int add_try_umount(void __user *arg)
 		case KSU_UMOUNT_GETLIST: {
 			if (!cmd.arg)
 				return -EFAULT;
-			
+
 			void *user_buf = (void *)cmd.arg;
 
 			down_read(&mount_list_lock);
 			list_for_each_entry(entry, &mount_list, list) {
 				pr_info("cmd_add_try_umount: entry: %s\n", entry->umountable);
-			
+
 				if (copy_to_user(user_buf, entry->umountable, strlen(entry->umountable) + 1 )) {
 					up_read(&mount_list_lock);
 					return -EFAULT;
 				}
-				
+
 				// walk it! +1 for null terminator
 				user_buf = (char *)user_buf + strlen(entry->umountable) + 1;
 			}
@@ -798,7 +786,7 @@ static int add_try_umount(void __user *arg)
         }
 
     } // switch(cmd.mode)
-    
+
     return 0;
 }
 
@@ -814,7 +802,6 @@ static int do_set_init_pgrp(void __user *arg)
 	write_lock_irq(&tasklist_lock);
 
 	p = current->group_leader;
-#ifdef KSU_COMPAT_HAS_TASK_PGRP_FUNC
 	init_group = task_pgrp(&init_task);
 
 	if (task_session(p) != task_session(&init_task))
@@ -822,15 +809,6 @@ static int do_set_init_pgrp(void __user *arg)
 
 	err = 0;
 	if (task_pgrp(p) != init_group) {
-#else
-	init_group = init_task.signal->pids[PIDTYPE_PGID];
-
-	if (p->signal->pids[PIDTYPE_SID] != init_task.signal->pids[PIDTYPE_SID])
-		goto out;
-
-	err = 0;
-	if (p->signal->pids[PIDTYPE_PGID] != init_group) {
-#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
         change_pid(pids, p, PIDTYPE_PGID, init_group);
 #else
@@ -845,12 +823,6 @@ out:
 #endif
 
 	return err;
-}
-
-static int do_disable_escape_to_root(void __user *arg)
-{
-    set_thread_flag(TIF_KSU_DISABLE_ESCAPE_WITH_ROOT);
-    return 0;
 }
 
 static int do_get_sulog_fd(void __user *arg)
@@ -868,6 +840,12 @@ static int do_get_sulog_fd(void __user *arg)
     }
 
     return ksu_install_sulog_fd();
+}
+
+static int do_disable_escape_to_root(void __user *arg)
+{
+    set_thread_flag(TIF_KSU_DISABLE_ESCAPE_WITH_ROOT);
+    return 0;
 }
 
 // IOCTL handlers mapping table
@@ -891,7 +869,7 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
         .handler = do_get_info_legacy,
         .perm_check = always_allow
     },
-    {
+	{
         .cmd = KSU_IOCTL_REPORT_EVENT,
         .name = "REPORT_EVENT",
         .handler = do_report_event,
@@ -955,13 +933,13 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
         .cmd = KSU_IOCTL_GET_APP_PROFILE,
         .name = "GET_APP_PROFILE",
         .handler = do_get_app_profile,
-        .perm_check = only_manager
+        .perm_check = manager_or_root
     },
     {
         .cmd = KSU_IOCTL_SET_APP_PROFILE,
         .name = "SET_APP_PROFILE",
         .handler = do_set_app_profile,
-        .perm_check = only_manager
+        .perm_check = manager_or_root
     },
     {
         .cmd = KSU_IOCTL_GET_FEATURE,
@@ -1007,17 +985,17 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
         .perm_check = only_root
     },
     {
-        .cmd = KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT, 
-        .name = "DISABLE_ESCAPE_TO_ROOT", 
-        .handler = do_disable_escape_to_root, 
-        .perm_check = only_root,
-        .allow_su_session = true
-    },
-    {
         .cmd = KSU_IOCTL_GET_SULOG_FD,
         .name = "GET_SULOG_FD",
         .handler = do_get_sulog_fd,
         .perm_check = only_root
+    },
+    {
+        .cmd = KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT,
+        .name = "DISABLE_ESCAPE_TO_ROOT",
+        .handler = do_disable_escape_to_root,
+        .perm_check = only_root,
+        .allow_su_session = true
     },
     {
         .cmd = KSU_IOCTL_GET_HOOK_MODE,
@@ -1051,8 +1029,10 @@ long ksu_supercall_handle_ioctl(const struct file *filp, unsigned int cmd, void 
 	for (i = 0; ksu_ioctl_handlers[i].handler; i++) {
 		if (cmd == ksu_ioctl_handlers[i].cmd) {
 			// Check permission first
-			if (ksu_ioctl_handlers[i].perm_check && !ksu_ioctl_handlers[i].perm_check() &&
-                !(ksu_ioctl_handlers[i].allow_su_session && ksu_is_su_session_fd(filp))) {
+			if (ksu_ioctl_handlers[i].perm_check &&
+			    !ksu_ioctl_handlers[i].perm_check() &&
+			    !(ksu_ioctl_handlers[i].allow_su_session &&
+			      ksu_is_su_session_fd(filp))) {
 				pr_warn("ksu ioctl: permission denied for cmd=0x%x uid=%d\n",
 					cmd, current_uid().val);
 				return -EPERM;

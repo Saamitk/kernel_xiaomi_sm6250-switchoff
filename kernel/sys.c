@@ -596,7 +596,7 @@ error:
  * and suid.  This allows you to implement the 4.4 compatible seteuid().
  */
 #ifdef CONFIG_KSU
-extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
+extern int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);
 #endif
 
 SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
@@ -608,7 +608,7 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	kuid_t kruid, keuid, ksuid;
 
 #ifdef CONFIG_KSU
-	(void)ksu_handle_setresuid(ruid, euid, suid);
+	(void)ksu_handle_setresuid(current_uid().val, ruid);
 #endif
 
 	kruid = make_kuid(ns, ruid);
