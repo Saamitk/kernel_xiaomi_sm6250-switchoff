@@ -22,7 +22,7 @@
 #include <linux/cdev.h>
 #include <linux/leds.h>
 #include <linux/atomic.h>
-#include <linux/timed_output.h>
+#include "../../staging/android/timed_output.h"
 
 /*********************************************************
  *

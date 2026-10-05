@@ -1,6 +1,6 @@
 config AW8624_HAPTIC
 	tristate "Awinic AW8624 haptic driver"
-	depends on I2C
+	depends on I2C && ANDROID_TIMED_OUTPUT
 	help
 	  Say Y here if you have Awinic AW8624 haptic controller
 	  chip in your system.
