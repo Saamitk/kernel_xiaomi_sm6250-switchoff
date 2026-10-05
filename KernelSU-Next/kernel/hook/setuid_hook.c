@@ -26,6 +26,8 @@
 #include "supercall/supercall.h"
 #include "hook/hook_manager.h"
 #include "feature/kernel_umount.h"
+#include "selinux/selinux.h"
+#include "ksu.h"
 #include "compat/kernel_compat.h"
 
 #ifdef CONFIG_KSU_SUSFS
