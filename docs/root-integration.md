@@ -88,7 +88,15 @@ Deliberately **not** done, and why:
 
 * `security/security.c` — KernelSU SELinux hiding is handled internally by `feature/selinux_hide.c`; SuSFS SELinux logging hooks are in `security/selinux/avc.c`. Neither requires an external `setprocattr` call.
 * `ksu_handle_newfstat_ret` / `fstat64_ret` / `init_mark_tracker` — the pinned official legacy source exposes none of those handlers; calling them would fail to link. The compat `COMPAT_SYSCALL_DEFINE4(newfstatat)` in `fs/stat.c` remains unhooked (its third argument is a compat `int`).
-* `path_umount()`/`can_umount()` are **not** added to `fs/namespace.c`: this 4.14 has no `static int can_umount` for the upstream Kbuild to extend, and the source already carries the `set_fs()` + `ksys_umount()` fallback (`feature/kernel_umount.c`).
+* `path_umount()`/`can_umount()` and `struct seccomp::filter_count` are carried
+  in-tree for the pinned KernelSU-Next compatibility layer. Its Kbuild otherwise
+  injects these with `sed -i` only when make descends into `drivers/kernelsu`,
+  after `fs/namespace.o` and other objects may already have compiled. That caused
+  an undefined `path_umount` at link time and could give `task_struct`
+  inconsistent layouts because `struct seccomp` is embedded in it. The
+  definitions and field are present before the build starts, so Kbuild's greps
+  skip those racy edits. The `set_fs()` + `ksys_umount()` fallback remains
+  available for kernels without `path_umount()`.
 * The helper scripts in `tools/root-integration/scripts/` are kept for reference **but must not be run on this tree**: they target a different KernelSU handler API and are non-idempotent. Use `apply_ksu_hooks.py` instead.
 
 ## Reproducing the integration from a clean tree
