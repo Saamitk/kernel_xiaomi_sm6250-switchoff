@@ -2,16 +2,17 @@
   "kernel": "4.14.357-openela (non-GKI, arm64, xiaomi miatoll / sm6250)",
   "components": {
     "kernelsu_next": {
-      "repository": "https://github.com/sidex15/KernelSU-Next",
-      "branch": "legacy-susfs-v2",
-      "commit_short": "d999a2aff115",
-      "commit_date": "2026-09-22",
+      "repository": "https://github.com/KernelSU-Next/KernelSU-Next",
+      "branch": "legacy",
+      "commit_short": "2d99a2da126f",
+      "commit_date": "2026-10-04",
       "version_code": 30000,
       "local_path": "KernelSU-Next/",
       "kernel_dir_symlink": "drivers/kernelsu -> ../KernelSU-Next/kernel",
-      "why_this_fork": "KernelSU-Next upstream has no SUSFS support and no legacy 4.14 manual-hook work; this 'legacy-susfs-v2' branch is the KernelSU-Next derivative with in-tree SuSFS v2 support (CONFIG_KSU_SUSFS_*), the CONFIG_KSU_MANUAL_HOOK call-site API for 4.14, and CONFIG_KSU_KPROBES_HOOK so it builds without kprobes/CONFIG_KALLSYMS hooking.",
-      "local_modifications": "none; Kbuild's generated-headers check (the hook audit) satisfied by apply_ksu_hooks.py",
-      "commit_ref": "branch legacy-susfs-v2 @ d999a2aff115"
+      "why_this_fork": "Official KernelSU-Next legacy source pinned to the upstream revision above. The in-tree compatibility overlay restores SuSFS v2.3.0 integration for this non-GKI 4.14 port; manual host hooks are adapted to the upstream two-UID setresuid API. NoMount remains a separate built-in component.",
+      "local_modifications": "SuSFS v2.3.0 compatibility overlay, 4.14 manual-hook API integration, and workflow version overrides; upstream source is otherwise synced from the pinned commit.",
+      "commit_ref": "KernelSU-Next/KernelSU-Next legacy @ 2d99a2da126f4df6d607d8917e244fd533fc61bf",
+      "commit": "2d99a2da126f4df6d607d8917e244fd533fc61bf"
     },
     "susfs": {
       "version": "2.3.0",
@@ -53,6 +54,30 @@
       ],
       "local_modifications": "none",
       "reason_for_no_changes": "Absent features are all post-5.10; backporting them onto the 4.14 bpf_prog/btf/trampoline layout is a large risky surgery unrelated to the root stack. See docs/root-integration.md#ebpf."
+    },
+    "droidspaces": {
+      "repository": "https://github.com/ravindu644/Droidspaces-OSS",
+      "configuration_guide": "Documentation/Kernel-Configuration.md",
+      "guide_commit": "ac38c11fef1402c0db8172ea8187db0401a0bc30",
+      "guide_audited": "2026-10-04",
+      "non_gki_patches": [
+        {
+          "upstream_commit": "50cb2ccbef7d84852f2600bb4d3e69f6bd736561",
+          "upstream_file": "Documentation/resources/kernel-patches/non-GKI/02.fix_restore cgroup file prefix handling .patch",
+          "status": "applied to kernel/cgroup/cgroup.c; style-adjusted equivalent",
+          "local_applier": "tools/root-integration/apply_droidspaces_cgroup.py"
+        },
+        {
+          "upstream_commit": "5011f9b440c8c4144473d9a26171fc8ecf59d059",
+          "upstream_file": "Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch",
+          "status": "not applicable: net/netfilter/xt_qtaguid.c is absent from this tree"
+        }
+      ],
+      "compatibility_notes": [
+        "WALT prevents CONFIG_CFS_BANDWIDTH from being enabled in this kernel; DroidSpaces CPU quotas may be unavailable.",
+        "The tree uses CONFIG_NF_CT_NETLINK in place of the guide name CONFIG_NF_CONNTRACK_NETLINK.",
+        "The guide names CONFIG_NETFILTER_XT_TARGET_MASQUERADE, CONFIG_FW_LOADER_COMPRESS, and CONFIG_ANDROID_PARANOID_NETWORK, which are not Kconfig symbols here; family NAT targets are enabled and FW_LOADER_USER_HELPER is enabled."
+      ]
     }
   },
   "toolchain": {
@@ -60,6 +85,6 @@
     "gcc": "not used for the kernel; no GNU cross binutils installed by CI",
     "workflow": ".github/workflows/kernel-build.yml"
   },
-  "recorded": "2026-09-24",
-  "note": "commit fields record the pinned upstream revision this tree was vendored from; the vendored copy is committed in-tree so the build is reproducible without network access."
+  "recorded": "2026-10-04",
+  "note": "KernelSU-Next kernel/ and uapi/ are synced to the pinned official upstream commit; the KSU SusFS overlay and host manual hooks are local integration changes. All vendored source is committed in-tree for offline reproducibility."
 }

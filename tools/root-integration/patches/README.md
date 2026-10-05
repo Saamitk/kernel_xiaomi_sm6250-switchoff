@@ -1,15 +1,13 @@
-# Provenance
+# Root integration patch artifacts
 
-`root-integration-core.patch` is the diff of every **tracked kernel file** this
-integration touched (`fs/`, `drivers/`, `include/`, `kernel/`, `mm/`, `security/`,
-`arch/arm64/configs/`, `build.sh`): the SuSFS kernel-side hooking, all KernelSU
-manual-hook call sites, the Kconfig/Makefile wiring and the defconfig. Apply with
-`git apply -p1` or `patch -p1`. It does not include the CI workflow or the docs. The two vendored upstream trees (`KernelSU-Next/`,
-`fs/nomount/`) are committed as-is — see `../upstreams.json` for their pins — so they
-are intentionally not part of this diff.
+`root-integration-core.patch` is retained as a **historical pre-V1.0.4 snapshot**.
+It predates the official KernelSU-Next upstream sync and its current SuSFS v2.3.0
+compatibility overlay; do not apply it to reproduce or build V1.0.4.
 
-`susfs/` holds the upstream SuSFS v2.3.0-for-4.14 patch that was applied here, so the
-integration can be replayed on another legacy tree.
-
-Applying the core patch elsewhere needs the vendored trees to be in place first
-(see ../../docs/root-integration.md, "Reproducing the integration from a clean tree").
+The authoritative state is the current checked-in source plus the exact upstream
+pins in `../upstreams.json`. The standalone `susfs/` patch remains the upstream
+SuSFS v2.3.0-for-4.14 patch that was applied to the kernel tree.
+`tools/root-integration/apply_droidspaces_cgroup.py` applies/verifies the style-adjusted,
+applicable DroidSpaces legacy cgroup compatibility patch. See
+`../../../docs/root-integration.md`
+for the current integration notes and build workflow.

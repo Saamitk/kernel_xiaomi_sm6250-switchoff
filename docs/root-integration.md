@@ -1,15 +1,16 @@
 # Root + stealth integration — miatoll 4.14 legacy (non-GKI)
 
-KernelSU-Next + SuSFS v2.3.0 + NoMount v2.0.0 integrated **in-tree** into
-`4.14.357-openela` (arm64, Xiaomi sm6250: miatoll / curtana / excalibur / gram /
-joyeuse), built with **clang 18 / ld.lld only** (no gcc anywhere in the build).
+Official KernelSU-Next legacy + SuSFS v2.3.0 + NoMount v2.0.0 are integrated
+**in-tree** into `4.14.357-openela` (arm64, Xiaomi sm6250: miatoll / curtana /
+excalibur / gram / joyeuse). The defconfig also enables the legacy-kernel
+requirements for **DroidSpaces**. Release builds use **clang 18 / ld.lld only**.
 
 Everything here is self-contained: the upstreams are vendored into this repo, so
 the tree builds without network access and without `git submodule update`.
 
 | part | revision | where |
 |---|---|---|
-| KernelSU-Next (legacy + SUSFS line) | `sidex15/KernelSU-Next`, branch `legacy-susfs-v2` @ `d999a2aff115` (2026‑09‑22), `KSU_VERSION=30000` | `KernelSU-Next/`, symlinked as `drivers/kernelsu` |
+| KernelSU-Next (official legacy) | `KernelSU-Next/KernelSU-Next`, branch `legacy` @ `2d99a2da126f4df6d607d8917e244fd533fc61bf` (2026‑10‑04); build reports `KSU_VERSION=30000` | `KernelSU-Next/kernel/` + `uapi/`, symlinked as `drivers/kernelsu` |
 | SuSFS | **v2.3.0**, `NON-GKI` variant | `tools/root-integration/patches/susfs/susfs_patch_to_4.14.patch` (already applied) |
 | NoMount | **v2.0.0**, built-in | `fs/nomount/` (from `maxsteeel/nomount@v2.0.0`, `kernel/src/*`) |
 | eBPF | 5.10-era backport, already in this tree | no changes (see [eBPF](#ebpf)) |
@@ -19,7 +20,7 @@ Machines: exact pins in [`tools/root-integration/upstreams.json`](../tools/root-
 ## Layout
 
 ```
-KernelSU-Next/                      vendored fork (kernel/, uapi/, manager/)
+KernelSU-Next/                      vendored official source (kernel/, uapi/)
 drivers/kernelsu -> ../KernelSU-Next/kernel      (symlink, upstream's own layout)
 drivers/{Makefile,Kconfig}          obj-$(CONFIG_KSU) += kernelsu/ + source .../Kconfig
 fs/susfs.c                          SuSFS core (from the patch)
@@ -29,7 +30,7 @@ fs/{Makefile,Kconfig}               nomount wiring
 tools/root-integration/
   apply_ksu_hooks.py                the hook installer (idempotent, --verify audits)
   audit_hooks.sh                    full integration audit (used by CI)
-  check_susfs_symbols.py            fork-vs-port symbol cross-check (used by CI)
+  check_susfs_symbols.py            SusFS-overlay-vs-port symbol cross-check (used by CI)
   upstreams.json                    exact upstream pins
   patches/                          provenance diff of this integration
   patches/susfs/                    the SuSFS 4.14 patch that was applied
@@ -40,22 +41,26 @@ tools/root-integration/
 
 4.14 with `# CONFIG_KPROBES is not set` (kept off deliberately) means **no kprobes
 and no syscall-table patching** (that mode needs ≥4.17). So KernelSU is wired with
-the fork's `CONFIG_KSU_MANUAL_HOOK=y` API: real calls inserted into the core
-kernel. The fork's `drivers/kernelsu/Kbuild` *fails the build* unless it finds
-them, so a half-integrated tree can never ship silently.
+the upstream `CONFIG_KSU_MANUAL_HOOK=y` API: real calls inserted into the core
+kernel. `drivers/kernelsu/Kbuild` *fails the build* unless it finds the reboot
+hook, so a half-integrated tree cannot ship silently.
 
 Call sites inserted (all inside `#ifdef CONFIG_KSU`):
 
 | file | function | handler |
 |---|---|---|
-| `fs/exec.c` | `__do_execve_file()` | `ksu_handle_execveat(dfd, &filename, …)` |
-| `fs/open.c` | `faccessat` | `ksu_handle_faccessat(&dfd, &filename, &mode, &tried)` |
-| `fs/stat.c` | `vfs_fstatat()` and `vfs_fstat()` | `ksu_handle_stat(dfd, filename, &stat)` / `ksu_handle_fstat(fd, &stat)` |
-| `fs/read_write.c` | `ksys_read` path | `ksu_handle_sys_read(fd)` (2‑arg form from `include/linux/syscalls.h`) |
-| `drivers/input/input.c` | `input_handle_event()` | `ksu_handle_input_handle_event(&type)` (guard vars `ksu_input_hook`) |
-| `kernel/reboot.c` | `kernel_restart()` | `ksu_handle_sys_reboot()` — this is what the Kbuild gate greps for |
-| `kernel/sys.c` | `__do_sys_setresuid()` | `ksu_handle_setresuid(ruid/euid/suid)` |
-| `security/selinux/hooks.c` | `selinux_setprocattr()` | `ksu_handle_selinux_setprocattr()` |
+| `fs/exec.c` | `__do_execve_file()` | `ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags)` |
+| `fs/open.c` | `faccessat` | `ksu_handle_faccessat(&dfd, &filename, &mode, NULL)` |
+| `fs/stat.c` | native `vfs_fstatat()` sites | `ksu_handle_stat(&dfd, &filename, &flag)` |
+| `fs/read_write.c` | `read` syscall | `ksu_handle_sys_read(fd)` when `ksu_init_rc_hook` is active |
+| `drivers/input/input.c` | `input_event()` | `ksu_handle_input_handle_event(&type, &code, &value)` when `ksu_input_hook` is active |
+| `kernel/reboot.c` | `reboot` syscall | `ksu_handle_sys_reboot()` — the Kbuild manual-hook check |
+| `kernel/sys.c` | `setresuid` syscall | `ksu_handle_setresuid(current_uid().val, ruid)`; upstream API takes old and new real UID |
+
+There is intentionally **no** external hook in `security/selinux/hooks.c`:
+upstream KernelSU-Next owns SELinux hiding internally, and the obsolete
+`ksu_hide_setprocattr()` call was removed because that symbol is not part of the
+pinned upstream source.
 
 ### Port fixup required by the SuSFS 4.14 patch
 
@@ -81,15 +86,24 @@ change is needed** (bits 26-31 are unused there too, hence no clash with
 
 Deliberately **not** done, and why:
 
-* `security/security.c` — this fork does not export `security_sb_*` hooks there; its SELinux work lives in `feature/selinux_hide.c` and the vendored `security/selinux/avc.c` SuSFS hooking.
-* `ksu_handle_newfstat_ret` / `fstat64_ret` / `init_mark_tracker` — no such handlers in `legacy-susfs-v2`; calling them = link error. The compat `COMPAT_SYSCALL_DEFINE4(newfstatat)` in `fs/stat.c` is left unhooked (3rd arg is a compat `int`, so `&dfd` would be a signedness mismatch).
-* `path_umount()`/`can_umount()` are **not** added to `fs/namespace.c`: this 4.14 has no `static int can_umount` for the fork's `Kbuild` to extend, and the fork already carries the `set_fs()` + `ksys_umount()` fallback (`feature/kernel_umount.c`) which is the intended pre‑5.11 path for `try_umount`.
-* The upstream helper scripts in `tools/root-integration/scripts/` are kept for reference **but must not be run on this tree**: `syscall_hook_patches.sh` emits a `ksu_handle_sys_read(unsigned int fd, char __user **, size_t *)` signature that this fork does not have, `susfs_inline_hook_patches.sh` calls handlers that don't exist here, and both are non-idempotent (`sed -i` appends, and they skip any file that already mentions `ksu_handle`). Use `apply_ksu_hooks.py` instead.
+* `security/security.c` — KernelSU SELinux hiding is handled internally by `feature/selinux_hide.c`; SuSFS SELinux logging hooks are in `security/selinux/avc.c`. Neither requires an external `setprocattr` call.
+* `ksu_handle_newfstat_ret` / `fstat64_ret` / `init_mark_tracker` — the pinned official legacy source exposes none of those handlers; calling them would fail to link. The compat `COMPAT_SYSCALL_DEFINE4(newfstatat)` in `fs/stat.c` remains unhooked (its third argument is a compat `int`).
+* `path_umount()`/`can_umount()` and `struct seccomp::filter_count` are carried
+  in-tree for the pinned KernelSU-Next compatibility layer. Its Kbuild otherwise
+  injects these with `sed -i` only when make descends into `drivers/kernelsu`,
+  after `fs/namespace.o` and other objects may already have compiled. That caused
+  an undefined `path_umount` at link time and could give `task_struct`
+  inconsistent layouts because `struct seccomp` is embedded in it. The
+  definitions and field are present before the build starts, so Kbuild's greps
+  skip those racy edits. The `set_fs()` + `ksys_umount()` fallback remains
+  available for kernels without `path_umount()`.
+* The helper scripts in `tools/root-integration/scripts/` are kept for reference **but must not be run on this tree**: they target a different KernelSU handler API and are non-idempotent. Use `apply_ksu_hooks.py` instead.
 
 ## Reproducing the integration from a clean tree
 
 ```bash
-# 1. KernelSU-Next (vendored in-tree already; upstream's own wiring recipe)
+# 1. KernelSU-Next official legacy source is pinned at 2d99a2da126f4df6d607d8917e244fd533fc61bf
+#    (the vendored tree already includes the local SuSFS v2.3.0 compatibility overlay)
 cp -a KernelSU-Next <clean-tree>/KernelSU-Next
 ln -sfn ../KernelSU-Next/kernel <clean-tree>/drivers/kernelsu
 echo 'obj-$(CONFIG_KSU) += kernelsu/'      >> <clean-tree>/drivers/Makefile
@@ -103,18 +117,21 @@ cp -a fs/nomount <clean-tree>/fs/nomount
 echo 'obj-$(CONFIG_NOMOUNT) += nomount/'   >> <clean-tree>/fs/Makefile
 echo 'source "fs/nomount/Kconfig"'         >> <clean-tree>/fs/Kconfig
 
-# 4. Manual hooks (idempotent; --verify re-audits without writing)
+# 4. DroidSpaces cgroup controller-prefix compatibility patch
+#    (the companion xt_qtaguid patch is inapplicable: that source file is absent here)
+python3 tools/root-integration/apply_droidspaces_cgroup.py <clean-tree>
+
+# 5. Manual hooks (idempotent; --verify re-audits without writing)
 python3 tools/root-integration/apply_ksu_hooks.py <clean-tree>
 
-# 5. Defconfig (see next section) then audit
+# 6. Defconfig (see next section) then audit
 bash tools/root-integration/audit_hooks.sh <clean-tree>
 ```
 
-Or just take [`tools/root-integration/patches/root-integration-core.patch`](../tools/root-integration/patches/root-integration-core.patch)
-(= `git diff` of the 32 tracked kernel files this integration touched: SuSFS hooking +
-all KernelSU call sites + Kconfig/Makefile wiring + defconfig + `build.sh`), apply it to a
-pristine `4.14.357-openela` tree with `git apply -p1`, then drop in `KernelSU-Next/`
-and `fs/nomount/`.
+The pre-V1.0.4 `root-integration-core.patch` is a historical snapshot and does not
+contain the current official KernelSU-Next sync or its SuSFS compatibility overlay;
+do not use it to reproduce this release. The pinned KSU tree, host hooks, SuSFS 4.14
+patch, NoMount sources, and current defconfig in this repository are authoritative.
 
 ## defconfig
 
@@ -139,32 +156,78 @@ CONFIG_NOMOUNT=y
 CONFIG_KALLSYMS_ALL=y
 ```
 
-**`CONFIG_KSU_SUSFS_TRY_UMOUNT` must stay off.** The fork calls `susfs_try_umount()`
-(`hook/setuid_hook.c`) and `susfs_add_try_umount()` (`supercall/supercall.c`) whenever
-that symbol is on, but this SuSFS v2.3.0-for-4.14 port implements neither (it keeps only
-the now-deprecated `CMD_SUSFS_ADD_TRY_UMOUNT` id), so enabling it is a
-compile/link failure — this was the first real build break of the tree:
+**`CONFIG_KSU_SUSFS_TRY_UMOUNT` must stay off.** The local KernelSU overlay only
+references `susfs_try_umount()` (`hook/setuid_hook.c`) and
+`susfs_add_try_umount()` (`supercall/supercall.c`) under that option, but the
+SuSFS v2.3.0-for-4.14 port implements neither (it keeps only the deprecated
+`CMD_SUSFS_ADD_TRY_UMOUNT` ID). Enabling the option would fail compilation; the
+CI symbol audit rejects it before the build:
 
 ```
 drivers/kernelsu/supercall/supercall.c:158:13: error: implicit declaration of function 'susfs_add_try_umount' [-Werror,-Wimplicit-function-declaration]
 ```
 
-With the symbol off, the fork's own zygote umount path is used instead
+With the symbol off, the upstream KSU zygote umount path is used instead
 (`feature/kernel_umount.c::ksu_handle_umount()`, driven by the `mount_list` supercalls
 `KSU_UMOUNT_ADD/DEL/GETSIZE`/`WIPE`), which is the functional equivalent here and is
-also what the deprecated susfs userspace command no longer needs. `tools/root-integration/check_susfs_symbols.py`
-cross-checks *every* `susfs_*` call in the fork against the definitions this port
-provides, honouring the guards in the defconfig, so this class of fork/port skew fails
+also what the deprecated SusFS userspace command no longer needs. `tools/root-integration/check_susfs_symbols.py`
+cross-checks *every* `susfs_*` call in the overlay against the definitions this port
+provides, honouring the guards in the defconfig, so this class of upstream/port skew fails
 in the CI audit step rather than 9 minutes into the build (it also confirms
 `CONFIG_KSU_SUSFS_SUS_MEMFD` must stay off for the same reason: no
 `susfs_add_sus_memfd()` in this port).
 
 `CONFIG_KSU_SYSCALL_TABLE_HOOK` stays off (needs ≥4.17). `# CONFIG_KPROBES is not set`
 is left as the upstream defconfig has it, which is exactly why `KSU_MANUAL_HOOK` is
-used. `CONFIG_FSNOTIFY`/`CONFIG_INOTIFY_USER` were already `y`, which the fork's
-fsnotify-based `pkg_observer` (4.12‑4.17 shape) requires. `CONFIG_KSU_SUSFS_SUS_MEMFD`
-is off because `memfd_create()` exists on 4.14 but the fork's sus_memfd path targets
-newer `shmem` internals.
+used. `CONFIG_FSNOTIFY`/`CONFIG_INOTIFY_USER` were already `y`, which upstream's
+fsnotify-based `pkg_observer` requires. `CONFIG_KSU_SUSFS_SUS_MEMFD` stays off because
+this 4.14 port has no `susfs_add_sus_memfd()` helper.
+
+## DroidSpaces support on the legacy kernel
+
+The miatoll defconfig enables the available non-GKI requirements from the
+[DroidSpaces kernel configuration guide](https://github.com/ravindu644/Droidspaces-OSS/blob/ac38c11fef1402c0db8172ea8187db0401a0bc30/Documentation/Kernel-Configuration.md): System V IPC and POSIX
+message queues; IPC/PID/UTS/user/network namespaces; seccomp filters; cgroup
+scheduling, freezer, memory/device/PID/CPU accounting and network-priority
+controllers; devtmpfs; OverlayFS; tmpfs xattrs/ACLs; firmware loading and user
+helper; veth/bridge support; netfilter, conntrack/netlink, IPv4 NAT, nftables,
+policy routing and IPv6 NAT/masquerading. User namespaces are enabled as required
+for DroidSpaces' container isolation; this expands the kernel attack surface and
+should be paired with Android userspace restrictions. The workflow checks these
+symbols in both the miatoll defconfig audit and the resolved `.config` before
+compiling.
+
+The applicable DroidSpaces non-GKI cgroup-prefix compatibility patch is applied
+by `tools/root-integration/apply_droidspaces_cgroup.py` to `kernel/cgroup/cgroup.c`;
+it restores controller-prefixed symlinks on
+`CGRP_ROOT_NOPREFIX` mounts. The guide's other non-GKI patch targets
+`net/netfilter/xt_qtaguid.c`, which is absent from this tree, so it is not applied.
+
+`CONFIG_CFS_BANDWIDTH` is gated by `!SCHED_WALT` in this 4.14 kernel, while miatoll
+uses WALT. The scheduler is left unchanged, so DroidSpaces CPU-quota limits may be
+unavailable. The guide's generic `CONFIG_NETFILTER_XT_TARGET_MASQUERADE` name is
+not defined in this 4.14 tree; the IPv4/IPv6 equivalents
+(`IP_NF_TARGET_MASQUERADE` and `IP6_NF_TARGET_MASQUERADE`) are enabled. Its
+`CONFIG_NF_CONNTRACK_NETLINK` is named `CONFIG_NF_CT_NETLINK` here and is enabled.
+`CONFIG_FW_LOADER_COMPRESS` and `CONFIG_ANDROID_PARANOID_NETWORK` are not defined
+as Kconfig symbols, while `CONFIG_FW_LOADER_USER_HELPER` is enabled. The tree also
+has no `DEVPTS_MULTIPLE_INSTANCES` Kconfig entry, so unknown defconfig keys are not
+added; unavailable optional limits are reported as such.
+
+## SELinux enforcement
+
+The miatoll release configuration has `CONFIG_SECURITY_SELINUX=y` and
+`CONFIG_DEFAULT_SECURITY_SELINUX=y`, with `CONFIG_SECURITY_SELINUX_DEVELOP`,
+`CONFIG_SECURITY_SELINUX_BOOTPARAM`, and `CONFIG_SECURITY_SELINUX_DISABLE` all
+unset. This builds SELinux in hard-enforcing mode: the kernel does not start in
+permissive mode, and the development-only `enforcing=0`/runtime setenforce and
+SELinux boot-disable paths are unavailable. The Actions workflow checks this
+security posture in the resolved `.config` before compiling.
+
+This is a security-sensitive behavior change; an incompatible device policy can
+cause denials or prevent userspace from booting. Verify the ROM's SELinux policy
+before flashing. Android properties such as `ro.boot.selinux` are userspace boot
+properties and are not defined by this kernel defconfig.
 
 ## NoMount on 4.14 — what was checked
 
@@ -214,9 +277,9 @@ helpers, that is a separate, testable project (see "what is missing" above).
 
 `.github/workflows/kernel-build.yml`:
 
-* LLVM `18.1.8` release tarball (`clang+llvm-*-x86_64-linux-gnu-ubuntu-18.04`) is
-  downloaded/cached and put first on `PATH`; the build asserts `clang --version`
-  contains `version 18`.
+* The workflow installs LLVM 18 from apt.llvm.org (with the runner's clang-18
+  package as fallback), pins the selected tools on `PATH`, and asserts that
+  `clang --version` contains `version 18`.
 * Kernel flags: `LLVM=1 LLVM_IAS=1 CC=clang CLANG_TRIPLE=aarch64-linux-gnu-
   CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld AR=llvm-ar NM=llvm-nm
   OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf
@@ -231,8 +294,9 @@ helpers, that is a separate, testable project (see "what is missing" above).
   loudly rather than silently mixing toolchains. `CROSS_COMPILE_ARM32` is not
   needed: `arch/arm64/kernel/vdso/` here is AArch64-native.
 * No `pahole` needed: the defconfig has no `CONFIG_DEBUG_INFO_BTF`/CTF.
-* `KSU_VERSION_OVERRIDE` / `KSU_VERSION_TAG_OVERRIDE` are passed because the vendored
-  tree is not a git repo (the fork's Kbuild otherwise `$(warning)`s).
+* `KSU_VERSION_OVERRIDE` / `KSU_VERSION_TAG_OVERRIDE` are passed because the
+  vendored source is not a standalone git checkout (upstream Kbuild otherwise uses
+  its fallback version/tag).
 * Pre-build gate: the workflow runs `apply_ksu_hooks.py --verify` and
   `audit_hooks.sh`, and greps the produced `.config` for
   `CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_NOMOUNT=y CONFIG_KSU_MANUAL_HOOK=y`.
@@ -247,18 +311,20 @@ LLVM binutils for target *and* host.
 
 ## Releasing
 
-Pushing a `v*` tag runs the same workflow and publishes a GitHub Release with the
-AnyKernel3 zip (`manually` + `make_release: true` also works for a one-off). The zip
-carries `Image.gz`, `kernel-notes.txt` (component versions, build date) and a
-`.sha256sum` next to it. `AnyKernel3/anykernel.sh` is patched with
+The release workflow accepts both `v*` and `V*` tags. For this release it publishes
+**V1.0.4** from the manually dispatched GitHub Actions workflow (`make_release: true`,
+`release_tag: V1.0.4`), using [`docs/release-notes.md`](release-notes.md) as its
+release description. The zip carries `Image.gz`, `kernel-notes.txt` (component
+versions and build date), and a `.sha256sum` file. `AnyKernel3/anykernel.sh` is patched with
 `kernel.string`, `kernel.compiler`, `kernel.version` and the `twrp`/`orangefox`
 recovery detection is left untouched (`is_slot_device=0`, A‑only,
 `/dev/block/bootdevice/by-name/boot`).
 
 ## Userspace side (not part of this repo)
 
-* **Manager**: must be a KernelSU‑Next manager compatible with `KSU_VERSION=30000`
-  / this fork's uapi (the vendored `KernelSU-Next/manager` matches the tree's ABI).
+* **Manager**: install a KernelSU‑Next manager compatible with the upstream UAPI
+  pinned above and the release build's `KSU_VERSION=30000` override. The Android
+  manager APK is not vendored in this kernel repository.
 * **SuSFS**: `susfs4ksu` module must ship the **v2.x `ksu_susfs`** helper. The v1.5.x
   `susfs4ksu.sh` is incompatible with the v2.3.0 kernel patch (and
   `add_open_redirect` gained a third `<UID_SCHEME>` argument).

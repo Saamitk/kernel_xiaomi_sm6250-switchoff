@@ -11,6 +11,7 @@
 #ifdef CONFIG_SECCOMP
 
 #include <linux/thread_info.h>
+#include <linux/atomic.h>
 #include <asm/seccomp.h>
 
 struct seccomp_filter;
@@ -19,14 +20,21 @@ struct seccomp_filter;
  *
  * @mode:  indicates one of the valid values above for controlled
  *         system calls available to a process.
+ * @filter_count: number of seccomp filters of the process
  * @filter: must always point to a valid seccomp-filter or NULL as it is
  *          accessed without locking during system call entry.
  *
  *          @filter must only be accessed from the context of current as there
  *          is no read locking.
+ *
+ * KernelSU-Next uses @filter_count, a field absent from the original 4.14
+ * structure.  Carry it here rather than letting Kbuild add it mid-build:
+ * struct seccomp is embedded in task_struct, so that would produce inconsistent
+ * task_struct layouts between objects compiled before and after the edit.
  */
 struct seccomp {
 	int mode;
+	atomic_t filter_count;
 	struct seccomp_filter *filter;
 };
 

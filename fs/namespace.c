@@ -2043,6 +2043,48 @@ SYSCALL_DEFINE1(oldumount, char __user *, name)
 
 #endif
 
+/*
+ * KernelSU-Next backport (see fs/internal.h).  This is the code its Kbuild
+ * would otherwise inject with sed at build time.  Carrying it in the tree
+ * makes the path_umount symbol available before fs/namespace.o is compiled.
+ *
+ * Keep both definitions at column 0: KernelSU-Next/kernel/Kbuild greps for
+ * "^static int can_umount" and "^int path_umount" to avoid its injection.
+ */
+static int can_umount(const struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+
+	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+		return -EINVAL;
+	if (!may_mount())
+		return -EPERM;
+	if (path->dentry != path->mnt->mnt_root)
+		return -EINVAL;
+	if (!check_mnt(mnt))
+		return -EINVAL;
+	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+		return -EINVAL;
+	if ((flags & MNT_FORCE) && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	return 0;
+}
+
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	int ret;
+
+	ret = can_umount(path, flags);
+	if (!ret)
+		ret = do_umount(mnt, flags);
+
+	dput(path->dentry);
+	mntput_no_expire(mnt);
+
+	return ret;
+}
+
 static bool is_mnt_ns_file(struct dentry *dentry)
 {
 	/* Is this a proxy for a mount namespace? */

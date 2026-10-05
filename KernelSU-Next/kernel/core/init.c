@@ -17,28 +17,32 @@
 #include "runtime/ksud_boot.h"
 #include "supercall/supercall.h"
 #include "ksu.h"
+#include "feature/sulog.h"
 #include "infra/file_wrapper.h"
-#include "feature/adb_root.h"
+#include "selinux/selinux.h"
 #include "feature/selinux_hide.h"
+#include "feature/adb_root.h"
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs.h>
-#endif // #ifdef CONFIG_KSU_SUSFS
-#include "selinux/selinux.h"
-#include "feature/sulog.h"
+#endif
 
 extern void __init ksu_lsm_hook_init(void);
 extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 					void *argv, void *envp, int *flags);
-extern int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
-				    void *argv, void *envp, int *flags);
+
+/*
+ * The manual call site in fs/exec.c (__do_execve_file) already hands us
+ * struct user_arg_ptr values, so pass them straight through with their real
+ * type. Declaring the parameter as void* here while ksud_integration.c
+ * defines it as struct user_arg_ptr* is a conflicting declaration of the
+ * same symbol.
+ */
 int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
 			void *envp, int *flags)
 {
-	ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags);
-	// adb_root must run even after the ksud execve hook is torn down
-	if (filename_ptr && !IS_ERR(*filename_ptr))
-		ksu_adb_root_handle_execve_filename(
-			*filename_ptr, (struct user_arg_ptr *)envp);
+	ksu_handle_execveat_ksud(fd, filename_ptr,
+				 (struct user_arg_ptr *)argv,
+				 (struct user_arg_ptr *)envp, flags);
 	return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp,
 					    flags);
 }
@@ -83,6 +87,16 @@ __attribute__((naked)) int __init kernelsu_init_early(void)
 struct cred *ksu_cred;
 bool ksu_late_loaded;
 
+#ifdef CONFIG_KSU_DEBUG
+bool allow_shell = true;
+#else
+bool allow_shell = false;
+#endif
+module_param(allow_shell, bool, 0);
+
+bool ksu_no_custom_rc = false;
+module_param_named(norc, ksu_no_custom_rc, bool, 0);
+
 #ifdef MODULE
 bool ksu_bundled = false;
 module_param_named(bundled, ksu_bundled, bool, 0);
@@ -106,19 +120,29 @@ int __init kernelsu_init(void)
 	pr_alert("*************************************************************");
 #endif
 
+	if (allow_shell) {
+		pr_alert("shell is allowed at init!");
+	}
+
     ksu_cred = prepare_creds();
     if (!ksu_cred) {
         pr_err("prepare cred failed!\n");
+        return -ENOSYS;
     }
 
 	ksu_feature_init();
 
 	ksu_sulog_init();
+
 	ksu_adb_root_init();
+
+	ksu_lsm_hook_init();
+
+	ksu_selinux_hide_init();
 
 	ksu_supercalls_init();
 
-	ksu_selinux_hide_init(); // so the feature is registered
+	ksu_app_profile_init();
 
 	if (ksu_late_loaded) {
 		pr_info("late load mode, skipping kprobe hooks\n");
@@ -151,16 +175,14 @@ int __init kernelsu_init(void)
 
 	} else {
 		ksu_syscall_hook_manager_init();
-		
-		ksu_lsm_hook_init();
 
 		ksu_allowlist_init();
 
 		ksu_throne_tracker_init();
 
 #ifdef CONFIG_KSU_SUSFS
-    	susfs_init();
-#endif // #ifdef CONFIG_KSU_SUSFS
+		susfs_init();
+#endif
 
 		ksu_ksud_init();
 
@@ -195,6 +217,7 @@ void __exit kernelsu_exit(void)
 
 	ksu_allowlist_exit();
 
+	ksu_selinux_hide_exit();
 
 	ksu_sulog_exit();
 

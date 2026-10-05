@@ -15,11 +15,12 @@ KernelSU-Next legacy branch exposes a slightly different set:
     ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
     ksu_handle_sys_read(unsigned int fd)            <- guarded by ksu_init_rc_hook
     ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value)
-    ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
+    ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
     ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg)
-    ksu_hide_setprocattr(const char *name, void *value, size_t size)
 
-Every call-site is `#ifdef`-guarded, so the tree still builds with
+The current official legacy source owns SELinux hiding internally; there is no
+external `selinux_setprocattr` hook. Every remaining call-site is `#ifdef`-guarded,
+so the tree still builds with
 CONFIG_KSU / CONFIG_KSU_SUSFS disabled.  The script is idempotent and aborts
 (exit 1) whenever an anchor is missing or ambiguous, so `--verify` can be used
 as a CI self-check.
@@ -130,13 +131,7 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 """
 
 DECL_SYS = """#ifdef CONFIG_KSU
-extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
-#endif
-
-"""
-
-DECL_SELINUX = """#ifdef CONFIG_KSU
-extern int ksu_hide_setprocattr(const char *name, void *value, size_t size);
+extern int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);
 #endif
 
 """
@@ -248,20 +243,11 @@ def build_jobs():
                        DECL_SYS, "extern int ksu_handle_setresuid")
         s, c2 = after(s, "\tkuid_t kruid, keuid, ksuid;\n",
                       "\n#ifdef CONFIG_KSU\n"
-                      "\t(void)ksu_handle_setresuid(ruid, euid, suid);\n"
-                      "#endif\n", "ksu_handle_setresuid(ruid, euid, suid)")
+                      "\t(void)ksu_handle_setresuid(current_uid().val, ruid);\n"
+                      "#endif\n", "ksu_handle_setresuid(current_uid().val, ruid)")
         return s, "%s / %s" % ("decl" if c1 else "decl already",
                                "call" if c2 else "call already")
 
-    def selinux_hunk(s):
-        s, c1 = before(s, "static int selinux_setprocattr(const char *name, void *value, size_t size)",
-                       DECL_SELINUX, "extern int ksu_hide_setprocattr")
-        s, c2 = after(s, "\tchar *str = value;\n",
-                      "#ifdef CONFIG_KSU\n"
-                      "\tksu_hide_setprocattr(name, value, size);\n"
-                      "#endif\n\n", "ksu_hide_setprocattr(name, value, size)")
-        return s, "%s / %s" % ("decl" if c1 else "decl already",
-                               "call" if c2 else "call already")
 
     return [
         ("fs/exec.c", exec_hunk),
@@ -271,7 +257,6 @@ def build_jobs():
         ("drivers/input/input.c", input_hunk),
         ("kernel/reboot.c", reboot_hunk),
         ("kernel/sys.c", sys_hunk),
-        ("security/selinux/hooks.c", selinux_hunk),
     ]
 
 

@@ -25,5 +25,5 @@ Notes:
   kernel/kallsyms, kernel/sys, mm/memory, security/selinux/avc).
 - It does **not** provide the KernelSU hooks (execve/faccessat/uid/reboot/...): those come
   from `apply_ksu_hooks.py`, and SuSFS itself needs a KSU fork exposing
-  `CONFIG_KSU_SUSFS_*` + `susfs_is_current_ksu_domain()` — supplied by the vendored
-  `KernelSU-Next` (`legacy-susfs-v2`).
+  `CONFIG_KSU_SUSFS_*` + `susfs_is_current_ksu_domain()` — supplied by the official
+  pinned KernelSU-Next legacy source plus this repository's local SuSFS compatibility overlay.
