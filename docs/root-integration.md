@@ -10,7 +10,7 @@ the tree builds without network access and without `git submodule update`.
 
 | part | revision | where |
 |---|---|---|
-| KernelSU-Next (official legacy) | `KernelSU-Next/KernelSU-Next`, branch `legacy` @ `2d99a2da126f4df6d607d8917e244fd533fc61bf` (2026‑10‑04); build reports `KSU_VERSION=33294` | `KernelSU-Next/kernel/` + `uapi/`, symlinked as `drivers/kernelsu` |
+| KernelSU-Next (official legacy) | `KernelSU-Next/KernelSU-Next`, branch `legacy` @ `cd739c78802333455391df973db17d9f28328b83` (2026‑10‑01); build reports `33294-4` (`KSU_VERSION=33294`, UAPI 4) | `KernelSU-Next/kernel/` + `uapi/`, symlinked as `drivers/kernelsu` |
 | SuSFS | **v2.3.0**, `NON-GKI` variant | `tools/root-integration/patches/susfs/susfs_patch_to_4.14.patch` (already applied) |
 | NoMount | **v2.0.0**, built-in | `fs/nomount/` (from `maxsteeel/nomount@v2.0.0`, `kernel/src/*`) |
 | eBPF | 5.10-era backport, already in this tree | no changes (see [eBPF](#ebpf)) |
@@ -102,7 +102,7 @@ Deliberately **not** done, and why:
 ## Reproducing the integration from a clean tree
 
 ```bash
-# 1. KernelSU-Next official legacy source is pinned at 2d99a2da126f4df6d607d8917e244fd533fc61bf
+# 1. KernelSU-Next official legacy source is pinned at cd739c78802333455391df973db17d9f28328b83
 #    (the vendored tree already includes the local SuSFS v2.3.0 compatibility overlay)
 cp -a KernelSU-Next <clean-tree>/KernelSU-Next
 ln -sfn ../KernelSU-Next/kernel <clean-tree>/drivers/kernelsu

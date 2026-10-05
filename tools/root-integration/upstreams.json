@@ -4,17 +4,18 @@
     "kernelsu_next": {
       "repository": "https://github.com/KernelSU-Next/KernelSU-Next",
       "branch": "legacy",
-      "commit_short": "2d99a2da126f",
-      "commit_date": "2026-10-04",
+      "commit_short": "cd739c788023",
+      "commit_date": "2026-10-01",
       "version_code": 33294,
-      "uapi_version": 5,
+      "uapi_version": 4,
       "local_path": "KernelSU-Next/",
       "kernel_dir_symlink": "drivers/kernelsu -> ../KernelSU-Next/kernel",
       "why_this_fork": "Official KernelSU-Next legacy source pinned to the upstream revision above. The in-tree compatibility overlay restores SuSFS v2.3.0 integration for this non-GKI 4.14 port; manual host hooks are adapted to the upstream two-UID setresuid API. NoMount remains a separate built-in component.",
       "local_modifications": "SuSFS v2.3.0 compatibility overlay, 4.14 manual-hook API integration, and workflow version overrides; upstream source is otherwise synced from the pinned commit.",
-      "commit_ref": "KernelSU-Next/KernelSU-Next legacy @ 2d99a2da126f4df6d607d8917e244fd533fc61bf",
-      "commit": "2d99a2da126f4df6d607d8917e244fd533fc61bf",
-      "upstream_checked": "2026-10-05"
+      "commit_ref": "KernelSU-Next/KernelSU-Next legacy @ cd739c78802333455391df973db17d9f28328b83",
+      "commit": "cd739c78802333455391df973db17d9f28328b83",
+      "upstream_checked": "2026-10-05",
+      "pin_reason": "User requested 33294-4: pin to the parent of the UAPI-5 EVENT_SERVICES change. Both the service-event implementation and the UAPI declaration were rolled back; this is not the latest legacy HEAD."
     },
     "susfs": {
       "version": "2.3.0",

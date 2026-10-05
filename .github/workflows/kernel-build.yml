@@ -56,7 +56,7 @@ env:
   LLVM_VER: 18
   LLVM_DIR: /usr/lib/llvm-18/bin
   CROSS_COMPILE: aarch64-linux-gnu-
-  KSU_VERSION_TAG: legacy-2d99a2da
+  KSU_VERSION_TAG: legacy-cd739c78
   KSU_VERSION: "33294"
 
 jobs:
