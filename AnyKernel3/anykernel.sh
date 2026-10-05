@@ -38,13 +38,17 @@ patch_vbmeta_flag=auto;
 ## AnyKernel file attributes
 # set permissions/ownership for included ramdisk files
 set_perm_recursive 0 0 755 644 $ramdisk/*;
-set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+for entry in "$ramdisk"/init* "$ramdisk/sbin"; do
+  [ -e "$entry" ] || [ -L "$entry" ] || continue;
+  set_perm_recursive 0 0 750 750 "$entry";
+done;
 
 ## AnyKernel boot install
 dump_boot;
 # Keep Android's ro.boot.selinux input consistent with this hard-enforcing
 # kernel; do not inherit permissive/disabled arguments from the old boot image.
-. tools/selinux-cmdline.sh;
+# dump_boot leaves cwd inside the ramdisk; resolve helpers from AK3 home.
+. "$home/tools/selinux-cmdline.sh";
 normalize_selinux_cmdline || abort "Unable to normalize SELinux boot arguments";
 write_boot;
 ## end boot install

@@ -3,6 +3,15 @@
 - **Build:** OpenELA 4.14.357 legacy kernel, non-GKI
 - **Devices:** Redmi Note 9 Pro / 9S, POCO M2 Pro, and the supported miatoll family
 
+## Installer hotfix
+
+- Fixed Error 1 after boot-image unpacking: `dump_boot` leaves the working
+  directory inside the ramdisk, so the SELinux helper is now loaded using the
+  absolute AnyKernel3 home path. A regression test exercises that directory
+  change before the simulated boot write.
+- Skip permission updates for absent optional `ramdisk/init*` and `ramdisk/sbin`
+  entries instead of emitting misleading missing-file warnings.
+
 ## Highlights
 
 - Updated the vendored KernelSU-Next legacy kernel and UAPI to official upstream commit [`2d99a2da126f`](https://github.com/KernelSU-Next/KernelSU-Next/commit/2d99a2da126f4df6d607d8917e244fd533fc61bf).

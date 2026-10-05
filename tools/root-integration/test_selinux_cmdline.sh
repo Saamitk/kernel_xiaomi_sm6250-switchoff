@@ -41,3 +41,24 @@ if normalize_selinux_cmdline; then
   exit 1
 fi
 echo 'SELinux boot argument tests passed (both unpackers, duplicates, idempotence, missing metadata)'
+
+# Exercise the actual installer source/normalize/write sequence after dump_boot
+# changes cwd, rather than only sourcing the helper directly from the test.
+mkdir -p "$tmp/package/tools" "$tmp/package/ramdisk" "$tmp/package/split_img"
+cp "$ROOT/AnyKernel3/tools/selinux-cmdline.sh" "$tmp/package/tools/"
+awk '/^dump_boot;/ { copying=1 } copying { print } /^write_boot;/ { exit }'   "$ROOT/AnyKernel3/anykernel.sh" > "$tmp/install-sequence.sh"
+(
+  home="$tmp/package"
+  split_img="$home/split_img"
+  printf 'cmdline=console=tty0 androidboot.selinux=permissive\n' > "$split_img/header"
+  dump_boot() { cd "$home/ramdisk"; }
+  abort() { echo "$*" >&2; exit 1; }
+  write_boot() {
+    grep -qx 'cmdline=console=tty0 androidboot.selinux=enforcing enforcing=1 selinux=1' "$split_img/header"
+    touch "$home/write-reached"
+  }
+  cd "$home"
+  . "$tmp/install-sequence.sh"
+)
+test -f "$tmp/package/write-reached"
+echo 'Installer post-dump working-directory regression passed'
