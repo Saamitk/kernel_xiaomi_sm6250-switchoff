@@ -1,23 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
- * Copyright (C) 2026 \xx
- *
- * This file is a downstream extension and NOT affiliated, endorsed by,
- * or maintained by the official KernelSU developers.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- */
-
 #ifndef __KSU_H_SELINUX_HIDE
 #define __KSU_H_SELINUX_HIDE
+
+#include "uapi/selinux.h"
+#include <linux/slab.h>
 
 void ksu_selinux_hide_init();
 void ksu_selinux_hide_exit();
 
-static int sepol_expected_argc(u32 cmd);
+// forward declaration — defined in selinux/rules.c which #includes this file's .c
+int sepol_expected_argc(u32 cmd);
 
 // its all push, no pop, so we can realloc forever
 
@@ -38,7 +29,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 	if (!args || !args[0])
 		return;
 
-	guarded_mutex_lock(&selinux_hide_list_mutex);
+	mutex_lock(&selinux_hide_list_mutex);
 
 	int argc = sepol_expected_argc(cmd);
 
@@ -59,7 +50,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 			snprintf(tmp_buf, sizeof(tmp_buf), ":%s:", name);
 
 			if (!strcmp(current_type, tmp_buf))
-				return;
+				goto out_unlock;
 
 			offset = offset + strlen(current_type) + 1;
 		}
@@ -70,7 +61,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 		char *new_ptr = krealloc(ksu_hide_type_list, new_total_len, GFP_KERNEL);
 		if (!new_ptr)
-			return;
+			goto out_unlock;
 
 		ksu_hide_type_list = new_ptr;
 
@@ -85,7 +76,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 	} else if (argc >= 2) {
 
 		if (!args[1])
-			return;
+			goto out_unlock;
 
 		const char *src = args[0];
 		const char *tgt = args[1];
@@ -111,7 +102,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 			snprintf(tgt_buf, sizeof(tgt_buf), ":%s:", tgt);
 
 			if (!strcmp(src_chk, src_buf) && !strcmp(tgt_chk, tgt_buf))
-				return;
+				goto out_unlock;
 
 			offset = offset + src_sz + tgt_sz;
 		}
@@ -121,7 +112,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 		size_t new_total_len = ksu_hide_rule_len + needed_len;
 		char *new_ptr = krealloc(ksu_hide_rule_list, new_total_len, GFP_KERNEL);
 		if (!new_ptr)
-			return;
+			goto out_unlock;
 
 		ksu_hide_rule_list = new_ptr;
 
@@ -137,46 +128,8 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 	}
 
-	return;
-}
-
-static bool ksu_should_destroy_context(char *str)
-{
-	if (!str)
-		return false;
-
-	guarded_mutex_lock(&selinux_hide_list_mutex);
-
-	size_t offset = 0;
-	while (offset < ksu_hide_type_len) {
-		const char *current_entry = ksu_hide_type_list + offset;
-		
-		if (strstr(str, current_entry))
-			return true;
-
-		offset = offset + strlen(current_entry) + 1;
-	}
-
-	// double strstr
-	char *str2 = strchr(str, ' ');
-	if (!str2)
-		return false;
-
-	offset = 0;
-	while (offset < ksu_hide_rule_len) {
-		const char *src_rule = ksu_hide_rule_list + offset;
-		size_t src_sz = strlen(src_rule) + 1;
-			
-		const char *tgt_rule = src_rule + src_sz;
-		size_t tgt_sz = strlen(tgt_rule) + 1;
-
-		if (strstr(str, src_rule) && strstr(str2, tgt_rule))
-			return true;
-
-		offset = offset + src_sz + tgt_sz;
-	}
-
-	return false;
+out_unlock:
+	mutex_unlock(&selinux_hide_list_mutex);
 }
 
 #if 0
@@ -197,7 +150,7 @@ struct ksu_rule_node {
 	char *tgt;
 };
 
-static int sepol_expected_argc(u32 cmd);
+int sepol_expected_argc(u32 cmd);
 
 static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 {
@@ -216,7 +169,7 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 		// no need after rule matching, keep as a reminder though
 		//if (!strcmp(name, "zygote") || !strcmp(name, "app_zygote"))
-		//	goto out_unlock;
+			//goto out_unlock;
 
 		struct ksu_type_node *t_node;
 		list_for_each_entry(t_node, &ksu_hide_type_list, list) {
@@ -241,10 +194,6 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 			pr_info("selinux_hide: tracking type: %s \n", t_node->padded_name);
 
 	} else if (argc >= 2) {
-
-		if (!args[1])
-			goto out_unlock;
-
 		const char *src = args[0];
 		const char *tgt = args[1];
 
@@ -286,40 +235,6 @@ static void ksu_add_shit_to_list(u32 cmd, const char *args[])
 
 out_unlock:
 	up_write(&ksu_sepolicy_shitlist_lock);
-}
-
-static bool ksu_should_destroy_context(char *str)
-{
-	if (!str)
-		return false;
-
-	down_read(&ksu_sepolicy_shitlist_lock);
-
-	struct ksu_type_node *t_node;
-	list_for_each_entry(t_node, &ksu_hide_type_list, list) {
-		if (strstr(str, t_node->padded_name)) {
-			up_read(&ksu_sepolicy_shitlist_lock);
-			return true;
-		}
-	}
-
-	// double strstr
-	char *str2 = strchr(str, ' ');
-	if (!str2) {
-		up_read(&ksu_sepolicy_shitlist_lock);
-		return false;
-	}		
-
-	struct ksu_rule_node *r_node;
-	list_for_each_entry(r_node, &ksu_hide_rule_list, list) {
-		if (strstr(str, r_node->src) && strstr(str2, r_node->tgt)) {
-			up_read(&ksu_sepolicy_shitlist_lock);
-			return true;
-		}
-	}
-
-	up_read(&ksu_sepolicy_shitlist_lock);
-	return false;
 }
 #endif
 

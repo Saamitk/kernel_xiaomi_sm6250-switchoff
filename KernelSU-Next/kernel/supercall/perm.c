@@ -1,3 +1,10 @@
+#include <linux/types.h>
+
+#include "supercall/internal.h"
+#include "manager/manager_identity.h"
+#include "policy/allowlist.h"
+
+// Permission check functions
 bool only_manager(void)
 {
 	return is_manager();
@@ -15,11 +22,11 @@ bool manager_or_root(void)
 
 bool always_allow(void)
 {
-	return true;
+	return true; // No permission check
 }
 
 bool allowed_for_su(void)
 {
-	return is_manager() || ksu_is_allow_uid_for_current(current_uid().val);
-
+	bool is_allowed = is_manager() || ksu_is_allow_uid_for_current(current_uid().val);
+	return is_allowed;
 }

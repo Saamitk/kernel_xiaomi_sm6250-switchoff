@@ -1,3 +1,16 @@
+#include <linux/anon_inodes.h>
+#include <linux/err.h>
+#include <linux/fdtable.h>
+#include <linux/file.h>
+#include <linux/fs.h>
+#include <linux/mutex.h>
+#include <linux/poll.h>
+#include <linux/sched.h>
+
+#include "infra/event_queue.h"
+#include "klog.h" // IWYU pragma: keep
+#include "sulog/event.h"
+
 static DEFINE_MUTEX(ksu_sulog_fd_lock);
 static bool ksu_sulog_fd_active;
 
