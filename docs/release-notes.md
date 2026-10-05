@@ -28,7 +28,7 @@
 - `CONFIG_KSU_SUSFS_TRY_UMOUNT` and `CONFIG_KSU_SUSFS_SUS_MEMFD` remain disabled because the SuSFS v2.3.0 4.14 port does not implement their helper functions. SuSFS and KernelSU's normal zygote unmount handling remain enabled.
 - This device uses WALT, and this kernel's `CONFIG_CFS_BANDWIDTH` depends on WALT being disabled. The scheduler is kept unchanged, so DroidSpaces CPU-quota limits may be unavailable; other supported container resource controls are enabled. The guide's xt_qtaguid patch was not applied because this tree has no `net/netfilter/xt_qtaguid.c`.
 - Hard-enforcing SELinux can expose policy denials or prevent boot if the ROM's policy is incompatible. Confirm the target userspace policy before flashing; permissive mode can no longer be selected through this kernel's development controls.
-- KernelSU-Next reports `KSU_VERSION=30000` for manager compatibility; its upstream source revision is identified above.
+- Corrected the release version override from `30000` to `33294`. KernelSU-Next now reports **33294-5**: `33294` is the integrator-pinned version code and `5` is the unchanged upstream UAPI version. The latest official legacy source revision is retained; this metadata correction is not a source upgrade or UAPI downgrade.
 - Flash using a compatible custom recovery and the attached AnyKernel3 package. Back up the current boot image before flashing.
 
 ## Validation and boot-property scope

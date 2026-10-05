@@ -10,7 +10,7 @@ the tree builds without network access and without `git submodule update`.
 
 | part | revision | where |
 |---|---|---|
-| KernelSU-Next (official legacy) | `KernelSU-Next/KernelSU-Next`, branch `legacy` @ `2d99a2da126f4df6d607d8917e244fd533fc61bf` (2026‑10‑04); build reports `KSU_VERSION=30000` | `KernelSU-Next/kernel/` + `uapi/`, symlinked as `drivers/kernelsu` |
+| KernelSU-Next (official legacy) | `KernelSU-Next/KernelSU-Next`, branch `legacy` @ `2d99a2da126f4df6d607d8917e244fd533fc61bf` (2026‑10‑04); build reports `KSU_VERSION=33294` | `KernelSU-Next/kernel/` + `uapi/`, symlinked as `drivers/kernelsu` |
 | SuSFS | **v2.3.0**, `NON-GKI` variant | `tools/root-integration/patches/susfs/susfs_patch_to_4.14.patch` (already applied) |
 | NoMount | **v2.0.0**, built-in | `fs/nomount/` (from `maxsteeel/nomount@v2.0.0`, `kernel/src/*`) |
 | eBPF | 5.10-era backport, already in this tree | no changes (see [eBPF](#ebpf)) |
@@ -330,7 +330,7 @@ recovery detection is left untouched (`is_slot_device=0`, A‑only,
 ## Userspace side (not part of this repo)
 
 * **Manager**: install a KernelSU‑Next manager compatible with the upstream UAPI
-  pinned above and the release build's `KSU_VERSION=30000` override. The Android
+  pinned above and the release build's `KSU_VERSION=33294` override. The Android
   manager APK is not vendored in this kernel repository.
 * **SuSFS**: `susfs4ksu` module must ship the **v2.x `ksu_susfs`** helper. The v1.5.x
   `susfs4ksu.sh` is incompatible with the v2.3.0 kernel patch (and
