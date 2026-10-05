@@ -42,6 +42,10 @@ set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
 
 ## AnyKernel boot install
 dump_boot;
+# Keep Android's ro.boot.selinux input consistent with this hard-enforcing
+# kernel; do not inherit permissive/disabled arguments from the old boot image.
+. tools/selinux-cmdline.sh;
+normalize_selinux_cmdline || abort "Unable to normalize SELinux boot arguments";
 write_boot;
 ## end boot install
 

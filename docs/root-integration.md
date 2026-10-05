@@ -227,7 +227,14 @@ security posture in the resolved `.config` before compiling.
 This is a security-sensitive behavior change; an incompatible device policy can
 cause denials or prevent userspace from booting. Verify the ROM's SELinux policy
 before flashing. Android properties such as `ro.boot.selinux` are userspace boot
-properties and are not defined by this kernel defconfig.
+properties and are not defined by this kernel defconfig. The AnyKernel3 installer
+now normalizes the unpacked boot-image command line before repacking, removing
+conflicting duplicates and setting `androidboot.selinux=enforcing`, `enforcing=1`,
+and `selinux=1`. It preserves unrelated arguments and supports both `cmdline.txt`
+and `header` unpacker formats. `test_selinux_cmdline.sh` regression-tests this
+helper before the Actions build. This does not change bootloader/vendor-provided
+arguments or bootconfig; confirm `getenforce` and `getprop ro.boot.selinux` on the
+target device. No userspace property/status spoofing is performed.
 
 ## NoMount on 4.14 — what was checked
 

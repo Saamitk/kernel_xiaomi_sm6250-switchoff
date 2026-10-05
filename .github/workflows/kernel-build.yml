@@ -151,6 +151,7 @@ jobs:
           test -f fs/nomount/nomount.c || { echo "::error::fs/nomount missing"; exit 1; }
           test -f fs/susfs.c || { echo "::error::fs/susfs.c missing"; exit 1; }
           bash tools/root-integration/audit_hooks.sh .
+          sh tools/root-integration/test_selinux_cmdline.sh
 
       - name: Component versions
         run: |
@@ -268,7 +269,7 @@ jobs:
         run: |
           set -e
           BUILD_DATE="$(date -u +'%Y%m%d-%H%M')"
-          ZIP="Stormbreaker-miatoll-${BUILD_DATE}-rootstack.zip"
+          ZIP="Stormbreaker-miatoll-V1.0.4-${BUILD_DATE}-rootstack.zip"
           rm -rf AK3 && cp -a AnyKernel3 AK3
           find AK3 -name .gitignore -delete
           cp "out/arch/arm64/boot/${KERNEL_FILE}" "AK3/${KERNEL_FILE}"
@@ -283,7 +284,7 @@ jobs:
           NoMount: v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}')
           DroidSpaces: namespaces, IPC, cgroups, OverlayFS, devtmpfs, NAT and cgroup path compatibility
           DroidSpaces CPU quotas: may be unavailable because WALT conflicts with CFS_BANDWIDTH
-          SELinux: hard-enforcing; development and boot/runtime disable options are off
+          SELinux: hard-enforcing; installer normalizes androidboot.selinux=enforcing enforcing=1 selinux=1
           eBPF: 5.10-level backport already in this tree (see docs/root-integration.md#ebpf)
           Toolchain: clang $(/opt/llvm18/bin/clang --version | head -1), ld.lld, LLVM_IAS=1 (no gcc)
           Built: ${BUILD_DATE} UTC
