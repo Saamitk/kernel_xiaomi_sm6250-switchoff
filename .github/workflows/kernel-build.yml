@@ -35,6 +35,10 @@ on:
         required: false
         default: "V1.0.4"
   push:
+    # Push-triggered release path for integrations without workflow-dispatch
+    # permission. Only an explicit release marker below publishes assets.
+    branches:
+      - "arena/01a10ba7-kernel-xiaomi-sm6250-switchoff"
     tags:
       - "v*"
       - "V*"
@@ -306,7 +310,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V') || inputs.make_release
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V') || inputs.make_release || (github.event_name == 'push' && github.ref == 'refs/heads/arena/01a10ba7-kernel-xiaomi-sm6250-switchoff' && contains(github.event.head_commit.message, '[release V1.0.4]'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
