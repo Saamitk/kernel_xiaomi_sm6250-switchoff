@@ -46,8 +46,8 @@ env:
   LLVM_VER: 18
   LLVM_DIR: /usr/lib/llvm-18/bin
   CROSS_COMPILE: aarch64-linux-gnu-
-  KSU_VERSION_TAG: ksun-legacy-susfs-v2-d999a2af
-  KSU_VERSION: "30000"
+  KSU_VERSION_TAG: backslashxx-v3.3.0-32661
+  KSU_VERSION: "32661"
 
 jobs:
   build:
@@ -157,7 +157,7 @@ jobs:
             echo "| part | version |"
             echo "|---|---|"
             echo "| kernel | $(make -s kernelversion) |"
-            echo "| KernelSU-Next | ${KSU_VERSION_TAG} |"
+            echo "| backslashxx KernelSU | ${KSU_VERSION_TAG} (build ${KSU_VERSION}) |"
             echo "| SuSFS | $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '\"') ($(grep -m1 'define SUSFS_VARIANT' include/linux/susfs.h | awk '{print $3}' | tr -d '\"')) |"
             echo "| NoMount | v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}') |"
             echo "| clang | $(clang --version | head -1) |"
@@ -237,15 +237,15 @@ jobs:
           rm -rf AK3 && cp -a AnyKernel3 AK3
           find AK3 -name .gitignore -delete
           cp "out/arch/arm64/boot/${KERNEL_FILE}" "AK3/${KERNEL_FILE}"
-          sed -i "s|^kernel.string=.*|kernel.string=OpenELA 4.14 + KernelSU-Next + SuSFS + NoMount|" AK3/anykernel.sh
+          sed -i "s|^kernel.string=.*|kernel.string=OpenELA 4.14 + backslashxx KernelSU v3.3.0-32661 + SuSFS + NoMount (V2.0.0)|" AK3/anykernel.sh
           sed -i "s|^kernel.compiler=.*|kernel.compiler=clang 18 (apt.llvm.org) + ld.lld, no gcc|" AK3/anykernel.sh
           sed -i "s|^kernel.made=.*|kernel.made=Saamitk / arena agent|" AK3/anykernel.sh
           sed -i "s|^kernel.version=.*|kernel.version=$(make -s kernelversion)|" AK3/anykernel.sh
           sed -i "s|^message.word=.*|message.word=KernelSU + SuSFS + NoMount|" AK3/anykernel.sh
           cat > AK3/kernel-notes.txt <<EOF
-          KernelSU-Next (legacy+susfs line): ${KSU_VERSION_TAG}
-          SuSFS: $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '"') (NON-GKI)
-          NoMount: v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}')
+          V2.0.0 — backslashxx KernelSU v3.3.0 (build 32661): ${KSU_VERSION_TAG}
+          SuSFS: $(grep -m1 'define SUSFS_VERSION' include/linux/susfs.h | awk '{print $3}' | tr -d '"') (NON-GKI) — unchanged
+          NoMount: v$(grep -m1 'define NOMOUNT_VERSION' fs/nomount/nomount.h | awk '{print $3}') — unchanged
           eBPF: 5.10-level backport already in this tree (verified; see docs/root-integration.md#ebpf)
           Toolchain: clang $(/opt/llvm18/bin/clang --version | head -1), ld.lld, LLVM_IAS=1 (no gcc)
           Built: ${BUILD_DATE} UTC
@@ -278,27 +278,28 @@ jobs:
             TAG="ci-${GITHUB_SHA::7}"
           fi
           NOTES=$(cat <<'EOF'
-          ## miatoll — Redmi Note 9 Pro / 9S / POCO M2 Pro (sm6250, kernel 4.14 legacy, non-GKI)
+          ## V2.0.0 — miatoll — Redmi Note 9 Pro / 9S / POCO M2 Pro (sm6250, kernel 4.14 legacy, non-GKI)
 
-          In-tree root + stealth stack, built with **clang 18 / ld.lld (no gcc)**:
+          Updated to **backslashxx/KernelSU v3.3.0 (build 32661)** with in-tree root + stealth stack, built with **clang 18 / ld.lld (no gcc)**.
 
           | component | state |
           |---|---|
-          | KernelSU-Next (legacy + SUSFS line) | `CONFIG_KSU=y`, manual hooks (`CONFIG_KSU_MANUAL_HOOK=y`) |
-          | SuSFS v2.3.0 (NON-GKI) | sus_path, sus_mount, sus_kstat, try_umount, spoof_uname, cmdline spoof, open_redirect, sus_map, ksu/susfs symbol hiding |
-          | NoMount v2.0.0 | `CONFIG_NOMOUNT=y`, built-in VFS path redirection (no overlay/bind mounts) |
+          | KernelSU (backslashxx) | `CONFIG_KSU=y`, build `32661`, version tag `backslashxx-v3.3.0-32661` |
+          | SuSFS v2.3.0 (NON-GKI) | kept unchanged — sus_path, sus_mount, sus_kstat, try_umount, spoof_uname, cmdline spoof, open_redirect, sus_map, ksu/susfs symbol hiding |
+          | NoMount v2.0.0 | `CONFIG_NOMOUNT=y`, built-in VFS path redirection (no overlay/bind mounts) — unchanged |
           | eBPF | 5.10-era backport already present in this tree (BTF/CO-RE, struct_ops, ringbuf, local storage, iterators, bpf_lsm) |
 
           **Flash**
           1. Boot a custom recovery (TWRP / OrangeFox) — A-only, `boot` slot is handled by AnyKernel3.
           2. Flash the zip below. AnyKernel3 backs up the current boot image to `/sdcard/`.
-          3. Reboot, install a KernelSU-Next manager (it must match the vendored manager signature), grant su.
+          3. Reboot, install a KernelSU manager compatible with build `32661` / `v3.3.0` (must match the vendored manager signature).
           4. Optional: flash the `susfs4ksu` / NoMount metamodule from inside the KSU manager.
 
           **Notes / limits**
+          - This release switches the KernelSU upstream from `KernelSU-Next (legacy-susfs-v2)` to `backslashxx/KernelSU` (`v3.3.0`, build `32661`).
+          - SuSFS (`v2.3.0`, NON-GKI) and NoMount (`v2.0.0`) remain exactly as in previous releases — no patches or updates applied to either.
+          - `CONFIG_KPROBES` stays off; hooking relies on the backslashxx kernel-side methods (manual hooks / syscall table / LSM where applicable) for 4.14.
           - SuSFS userspace (`ksu_susfs`) must be the v2.x build; the v1.5.x helper is incompatible.
-          - NoMount's prebuilt LKM does not apply here — it is compiled into the kernel, so just flash the NoMount module.
-          - `CONFIG_KPROBES` stays off; the KSU hooking is done with in-tree manual hooks (syscall-table patching is not used on 4.14).
           EOF
           )
           if gh release view "$TAG" >/dev/null 2>&1; then

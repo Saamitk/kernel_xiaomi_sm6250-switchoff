@@ -7,7 +7,7 @@
 # and no aarch64 binutils dependency anywhere in this script.
 #
 # It also builds the in-tree AnyKernel3 flashable zip and runs the root-stack
-# audit (KernelSU-Next + SuSFS v2.3.0 + NoMount v2.0.0) before compiling, so a
+# audit (backslashxx KernelSU v3.3.0 (32661) + SuSFS v2.3.0 + NoMount v2.0.0) before compiling, so a
 # half-integrated tree fails fast instead of producing a kernel without hooks.
 #
 # Usage:  ./build.sh [-c] [--no-zip]     (-c = clean out/ first)
@@ -23,8 +23,8 @@ LLVM_VER=${LLVM_VER:-18.1.8}
 LLVM_TARBALL=${LLVM_TARBALL:-clang+llvm-${LLVM_VER}-x86_64-linux-gnu-ubuntu-18.04}
 LLVM_DIR=$TOP/toolchains/llvm
 CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
-KSU_VERSION=${KSU_VERSION:-30000}
-KSU_VERSION_TAG=${KSU_VERSION_TAG:-ksun-legacy-susfs-v2-d999a2af}
+KSU_VERSION=${KSU_VERSION:-32661}
+KSU_VERSION_TAG=${KSU_VERSION_TAG:-backslashxx-v3.3.0-32661}
 BUILD_ZIP=1
 JOBS=${JOBS:-$(nproc --all)}
 
@@ -98,7 +98,7 @@ if [ "$BUILD_ZIP" = "1" ]; then
   rm -rf "$TOP/AK3" && cp -a "$TOP/AnyKernel3" "$TOP/AK3"
   find "$TOP/AK3" -name .gitignore -delete
   cp "$KIMG" "AK3/$(basename "$KIMG")"
-  sed -i "s|^kernel.string=.*|kernel.string=OpenELA 4.14 + KernelSU-Next + SuSFS + NoMount|" AK3/anykernel.sh
+  sed -i "s|^kernel.string=.*|kernel.string=OpenELA 4.14 + backslashxx KernelSU v3.3.0-32661 + SuSFS + NoMount (V2.0.0)|" AK3/anykernel.sh
   sed -i "s|^kernel.compiler=.*|kernel.compiler=clang ${LLVM_VER} + ld.lld (no gcc)|" AK3/anykernel.sh
   sed -i "s|^kernel.made=.*|kernel.made=$(whoami)@$(hostname)|" AK3/anykernel.sh
   sed -i "s|^kernel.version=.*|kernel.version=$(make -s kernelversion)|" AK3/anykernel.sh

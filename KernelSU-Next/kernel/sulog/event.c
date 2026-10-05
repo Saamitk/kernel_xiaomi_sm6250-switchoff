@@ -1,54 +1,8 @@
-#include <asm/current.h>
-#include <linux/compat.h>
-#include <linux/cred.h>
-#include <linux/gfp.h>
-#include <linux/kernel.h>
-#include <linux/overflow.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
-#include <linux/sched/signal.h>
-#endif
-
-#include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/uaccess.h>
-
-// untagged_addr is a macro in mm.h on x86 before 6.2
-#if defined(__x86_64__) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
-#include <linux/mm.h>
-#endif
-
-#include "compat/kernel_compat.h"
-#include "feature/sulog.h"
-#include "infra/event_queue.h"
-#include "klog.h" // IWYU pragma: keep
-#include "sulog/event.h"
-
 #define KSU_SULOG_MAX_QUEUED 256U
 #define KSU_SULOG_MAX_PAYLOAD_LEN 2048U
 #define KSU_SULOG_MAX_ARG_STRINGS 0x7FFFFFFF
 #define KSU_SULOG_MAX_ARG_CHUNK 256U
 #define KSU_SULOG_MAX_FILENAME_LEN 256U
-
-#include <asm/current.h>
-#include <linux/compat.h>
-#include <linux/cred.h>
-#include <linux/gfp.h>
-#include <linux/overflow.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
-#include <linux/sched/signal.h>
-#endif
-#include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/uaccess.h>
-
-#include "feature/sulog.h"
-#include "infra/event_queue.h"
-#include "klog.h" // IWYU pragma: keep
-#include "sulog/event.h"
-#include "selinux/selinux.h"
-#include "compat/kernel_compat.h"
 
 static struct ksu_event_queue sulog_queue;
 
@@ -85,7 +39,7 @@ static void ksu_sulog_set_identity(struct ksu_sulog_event *event, const struct k
 	event->euid = identity->euid;
 }
 
-struct ksu_sulog_pending_event *ksu_sulog_capture(__u16 event_type, const char *bprm_argv, size_t bprm_argv_len, gfp_t gfp)
+static struct ksu_sulog_pending_event *ksu_sulog_capture(__u16 event_type, const char *bprm_argv, size_t bprm_argv_len, gfp_t gfp)
 {
 	struct ksu_sulog_pending_event *pending = NULL;
 	struct ksu_sulog_event *event;
@@ -178,7 +132,7 @@ static struct ksu_sulog_pending_event *ksu_sulog_capture_grant_root(const struct
 	struct ksu_sulog_pending_event *pending;
 	struct ksu_sulog_event *event;
 
-	pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, NULL, gfp);
+	pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, 0, gfp);
 	if (!pending)
 		return NULL;
 
@@ -219,7 +173,7 @@ void ksu_sulog_emit_pending(struct ksu_sulog_pending_event *pending, int retval,
 	ksu_sulog_free_pending(pending);
 }
 
-int ksu_sulog_emit_grant_root(int retval, __u32 uid, __u32 euid, gfp_t gfp)
+static int ksu_sulog_emit_grant_root(int retval, __u32 uid, __u32 euid, gfp_t gfp)
 {
 	if (!ksu_sulog_is_enabled())
 		return 0;
@@ -238,7 +192,7 @@ int ksu_sulog_emit_grant_root(int retval, __u32 uid, __u32 euid, gfp_t gfp)
 	return 0;
 }
 
-int ksu_sulog_emit(__u16 event_type, const char *bprm_argv, size_t bprm_argv_len, gfp_t gfp)
+static int ksu_sulog_emit(__u16 event_type, const char *bprm_argv, size_t bprm_argv_len, gfp_t gfp)
 {
 	if (!ksu_sulog_is_enabled())
 		return 0;
@@ -253,11 +207,8 @@ int ksu_sulog_emit(__u16 event_type, const char *bprm_argv, size_t bprm_argv_len
 	return 0;
 }
 
-static void ksu_sulog_emit_bprm(const char *filename)
+static noinline void do_ksu_sulog_emit_bprm(const char *filename)
 {
-	if (!ksu_sulog_is_enabled())
-		return;
-
 	// maybe tag the process instead?
 	if (!is_ksu_domain())
 		return;
@@ -278,7 +229,7 @@ static void ksu_sulog_emit_bprm(const char *filename)
 	size_t argv_copy_len = (arg_len > ARGV_MAX_BPRM) ? ARGV_MAX_BPRM : arg_len;
 
 	// we cant use strncpy on here, else it will truncate once it sees \0
-	if (ksu_copy_from_user_retry(args, (void __user *)arg_start, argv_copy_len))
+	if (copy_from_user_retry(args, (void __user *)arg_start, argv_copy_len))
 		return;
 
 	args[argv_copy_len - 1] = '\0';

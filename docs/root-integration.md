@@ -1,15 +1,19 @@
-# Root + stealth integration — miatoll 4.14 legacy (non-GKI)
+# Root + stealth integration — miatoll 4.14 legacy (non-GKI) — V2.0.0
 
-KernelSU-Next + SuSFS v2.3.0 + NoMount v2.0.0 integrated **in-tree** into
+Backslashxx KernelSU v3.3.0 (build 32661) + SuSFS v2.3.0 + NoMount v2.0.0 integrated **in-tree** into
 `4.14.357-openela` (arm64, Xiaomi sm6250: miatoll / curtana / excalibur / gram /
 joyeuse), built with **clang 18 / ld.lld only** (no gcc anywhere in the build).
+
+This is release **V2.0.0**: KernelSU upstream changed from `KernelSU-Next (legacy-susfs-v2)`
+to `backslashxx/KernelSU` (`v3.3.0`, build `32661`). SuSFS (`v2.3.0`) and NoMount (`v2.0.0`)
+remain unchanged.
 
 Everything here is self-contained: the upstreams are vendored into this repo, so
 the tree builds without network access and without `git submodule update`.
 
 | part | revision | where |
 |---|---|---|
-| KernelSU-Next (legacy + SUSFS line) | `sidex15/KernelSU-Next`, branch `legacy-susfs-v2` @ `d999a2aff115` (2026‑09‑22), `KSU_VERSION=30000` | `KernelSU-Next/`, symlinked as `drivers/kernelsu` |
+| backslashxx KernelSU (v3.3.0, build 32661) | `backslashxx-v3.3.0-32661`, `KSU_VERSION=32661` | `KernelSU-Next/` (`kernel/` symlinked as `drivers/kernelsu`) |
 | SuSFS | **v2.3.0**, `NON-GKI` variant | `tools/root-integration/patches/susfs/susfs_patch_to_4.14.patch` (already applied) |
 | NoMount | **v2.0.0**, built-in | `fs/nomount/` (from `maxsteeel/nomount@v2.0.0`, `kernel/src/*`) |
 | eBPF | 5.10-era backport, already in this tree | no changes (see [eBPF](#ebpf)) |
