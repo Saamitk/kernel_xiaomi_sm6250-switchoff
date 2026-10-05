@@ -280,7 +280,7 @@ jobs:
           NOTES=$(cat <<'EOF'
           ## V2.0.0 — miatoll — Redmi Note 9 Pro / 9S / POCO M2 Pro (sm6250, kernel 4.14 legacy, non-GKI)
 
-          Updated to **backslashxx/KernelSU v3.3.0 (build 32661)** with in-tree root + stealth stack, built with **clang 18 / ld.lld (no gcc)**.
+          Reference updated to backslashxx/KernelSU v3.3.0 (build 32661); original KernelSU-Next source kept for build-stable manual-hook / SuSFS / NoMount integration + stealth stack, built with **clang 18 / ld.lld (no gcc)**.
 
           | component | state |
           |---|---|
